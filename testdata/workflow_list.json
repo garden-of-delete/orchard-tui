@@ -1,0 +1,26 @@
+[
+  {
+    "id": "wf-f231a08f-60e4-480a-b845-e53e06918f77",
+    "name": "nightly-load",
+    "status": "running",
+    "createdAt": "2026-04-26T10:30:00",
+    "activatedAt": "2026-04-26T10:31:02.123",
+    "terminatedAt": null
+  },
+  {
+    "id": "wf-aa11bb22-cc33-4d44-9e55-ff6677889900",
+    "name": "hourly-rollup",
+    "status": "finished",
+    "createdAt": "2026-04-25T22:00:00",
+    "activatedAt": "2026-04-25T22:00:05",
+    "terminatedAt": "2026-04-25T22:14:33"
+  },
+  {
+    "id": "wf-deadbeef-cafe-babe-feed-c0ffeeface00",
+    "name": "demo-pipeline",
+    "status": "pending",
+    "createdAt": "2026-04-26T11:00:00",
+    "activatedAt": null,
+    "terminatedAt": null
+  }
+]

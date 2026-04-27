@@ -1,0 +1,8 @@
+[
+  { "date": "2026-04-24", "status": "finished", "count": 4 },
+  { "date": "2026-04-24", "status": "failed",   "count": 1 },
+  { "date": "2026-04-25", "status": "finished", "count": 7 },
+  { "date": "2026-04-25", "status": "canceled", "count": 1 },
+  { "date": "2026-04-26", "status": "running",  "count": 12 },
+  { "date": "2026-04-26", "status": "finished", "count": 3 }
+]

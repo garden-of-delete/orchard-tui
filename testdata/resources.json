@@ -1,0 +1,25 @@
+{
+  "workflow": {
+    "id": "wf-f231a08f-60e4-480a-b845-e53e06918f77",
+    "name": "nightly-load",
+    "status": "running",
+    "createdAt": "2026-04-26T10:30:00",
+    "activatedAt": "2026-04-26T10:31:02",
+    "terminatedAt": null
+  },
+  "resources": [
+    {
+      "workflowId": "wf-f231a08f-60e4-480a-b845-e53e06918f77",
+      "resourceId": "1",
+      "name": "emr-cluster",
+      "resourceType": "aws.resource.EmrResource",
+      "resourceSpec": { "instanceCount": 3, "instanceType": "m5.xlarge" },
+      "maxAttempt": 3,
+      "status": "running",
+      "createdAt": "2026-04-26T10:30:00",
+      "activatedAt": "2026-04-26T10:31:05",
+      "terminatedAt": null,
+      "terminateAfter": 8
+    }
+  ]
+}

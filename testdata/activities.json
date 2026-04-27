@@ -1,0 +1,38 @@
+{
+  "workflow": {
+    "id": "wf-f231a08f-60e4-480a-b845-e53e06918f77",
+    "name": "nightly-load",
+    "status": "running",
+    "createdAt": "2026-04-26T10:30:00",
+    "activatedAt": "2026-04-26T10:31:02",
+    "terminatedAt": null
+  },
+  "activities": [
+    {
+      "workflowId": "wf-f231a08f-60e4-480a-b845-e53e06918f77",
+      "activityId": "1",
+      "name": "extract",
+      "activityType": "aws.activity.EmrActivity",
+      "activitySpec": { "step": "extract", "stepConfig": { "jar": "s3://lib/extract.jar" } },
+      "resourceId": "1",
+      "maxAttempt": 3,
+      "status": "finished",
+      "createdAt": "2026-04-26T10:30:00",
+      "activatedAt": "2026-04-26T10:31:05",
+      "terminatedAt": "2026-04-26T10:42:12"
+    },
+    {
+      "workflowId": "wf-f231a08f-60e4-480a-b845-e53e06918f77",
+      "activityId": "2",
+      "name": "transform",
+      "activityType": "aws.activity.EmrActivity",
+      "activitySpec": { "step": "transform" },
+      "resourceId": "1",
+      "maxAttempt": 3,
+      "status": "running",
+      "createdAt": "2026-04-26T10:30:00",
+      "activatedAt": "2026-04-26T10:42:13",
+      "terminatedAt": null
+    }
+  ]
+}

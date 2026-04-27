@@ -1,0 +1,43 @@
+{
+  "activity": {
+    "workflowId": "wf-f231a08f-60e4-480a-b845-e53e06918f77",
+    "activityId": "2",
+    "name": "transform",
+    "activityType": "aws.activity.EmrActivity",
+    "activitySpec": { "step": "transform" },
+    "resourceId": "1",
+    "maxAttempt": 3,
+    "status": "running",
+    "createdAt": "2026-04-26T10:30:00",
+    "activatedAt": "2026-04-26T10:42:13",
+    "terminatedAt": null
+  },
+  "attempts": [
+    {
+      "workflowId": "wf-f231a08f-60e4-480a-b845-e53e06918f77",
+      "activityId": "2",
+      "attempt": 1,
+      "status": "failed",
+      "errorMessage": "EMR step exited with non-zero code",
+      "resourceId": "1",
+      "resourceInstanceAttempt": 1,
+      "attemptSpec": { "stepId": "s-ABCDEF12345" },
+      "createdAt": "2026-04-26T10:42:13",
+      "activatedAt": "2026-04-26T10:42:14",
+      "terminatedAt": "2026-04-26T10:55:01"
+    },
+    {
+      "workflowId": "wf-f231a08f-60e4-480a-b845-e53e06918f77",
+      "activityId": "2",
+      "attempt": 2,
+      "status": "running",
+      "errorMessage": "",
+      "resourceId": "1",
+      "resourceInstanceAttempt": 1,
+      "attemptSpec": { "stepId": "s-XYZ7890ABCDE" },
+      "createdAt": "2026-04-26T10:55:02",
+      "activatedAt": "2026-04-26T10:55:03",
+      "terminatedAt": null
+    }
+  ]
+}

@@ -23,3 +23,12 @@ go.work.sum
 
 # env file
 .env
+
+# build output
+/bin/
+/dist/
+# stray binaries from `go build ./cmd/...`
+/integration
+
+# Claude Code per-machine settings (shared settings can live in .claude/settings.json)
+.claude/settings.local.json

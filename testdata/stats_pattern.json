@@ -1,0 +1,7 @@
+[
+  { "dow": 0, "hour": 0,  "count": 2 },
+  { "dow": 0, "hour": 12, "count": 5 },
+  { "dow": 1, "hour": 9,  "count": 11 },
+  { "dow": 3, "hour": 22, "count": 7 },
+  { "dow": 6, "hour": 6,  "count": 3 }
+]
