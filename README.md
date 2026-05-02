@@ -1,9 +1,14 @@
 # orchard-tui
 
-A terminal UI for [orchard](https://github.com/garden-of-delete/orchard). orchard-tui mirrors the read-only surface
-of the [orchard-ui](https://github.com/garden-of-delete/orchard-ui) Next.js
-console — list, drill into, and triage workflows, activities, resources, and
-stats — all from your terminal.
+A read-only terminal UI for
+[orchard](https://github.com/garden-of-delete/orchard). orchard-tui mirrors
+the surface of the [orchard-ui](https://github.com/garden-of-delete/orchard-ui)
+Next.js console — list, drill into, and triage workflows, activities,
+resources, and stats — all from your terminal.
+
+orchard-tui is **read-only by design**: it never issues a mutating request
+against orchard. Use orchard's API (or its web console) to create, activate,
+cancel, or delete workflows.
 
 It ships as a single static binary and is designed to **run inside the orchard
 pod** against `http://localhost:9000`, so there's nothing to expose and no
@@ -23,11 +28,6 @@ extra services to keep alive.
 │ enter·view  /·filter  r·refresh  :·cmd  ?·help  q·quit   │
 └──────────────────────────────────────────────────────────┘
 ```
-
-## Status
-
-**v0.1 — read-only viewer.** Mutations (create / activate / cancel / delete) are
-intentionally out of scope for this version.
 
 ## Install
 
@@ -79,7 +79,7 @@ All configuration is via environment variables.
 | Var | Default | Purpose |
 |---|---|---|
 | `ORCHARD_HOST` | `http://localhost:9000` | orchard base URL |
-| `ORCHARD_API_KEY` | (unset) | Optional `x-api-key` header value |
+| `ORCHARD_TUI_API_KEY` | (unset) | Optional `x-api-key` header value |
 | `ORCHARD_POLL_FAST` | `2s` | Poll interval for active screens (lists/details with running entities) |
 | `ORCHARD_POLL_MEDIUM` | `10s` | Poll interval for header status counts |
 | `ORCHARD_POLL_SLOW` | `60s` | Poll interval for the stats screen |
@@ -109,6 +109,9 @@ resolved configuration and exits — handy when debugging in a new pod.
 ## Screens
 
 1. **Workflows list** — filterable by status; `/`-search; auto-refresh.
+   Fetches up to 200 workflows per request; if the result hits that cap
+   the screen shows a truncation hint and you can narrow via `/`, a
+   status filter, or `:wf <id>` for direct lookup.
 2. **Workflow detail** — header card + tabbed Activities / Resources tables.
 3. **Activity detail** — header card + attempts table; `enter` opens the
    attempt's `attemptSpec` in the JSON viewer.

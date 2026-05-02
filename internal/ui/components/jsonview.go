@@ -9,19 +9,41 @@ import (
 	"github.com/alecthomas/chroma/v2/quick"
 	"golang.design/x/clipboard"
 
+	"github.com/garden-of-delete/orchard-tui/internal/format"
 	"github.com/garden-of-delete/orchard-tui/internal/ui/styles"
 )
 
-// PrettyJSON returns indented JSON. Falls back to raw on parse error.
+// PrettyJSON returns indented JSON. Round-trips the input through
+// Unmarshal+Marshal so any literal control bytes that may have crept
+// into string values (RFC 8259 forbids them, but a buggy or malicious
+// producer could emit them) are re-emitted as \u00xx escapes by Go's
+// encoder. UseNumber preserves integer precision for large numbers.
+//
+// Side effect: object keys are emitted in alphabetical order. For a
+// pure read-only spec viewer this is a feature (predictable scanning,
+// stable in-content search) more than a regression.
+//
+// Falls back to a sanitized version of the raw bytes if the input
+// can't be parsed (e.g., the producer emitted invalid JSON with raw
+// control bytes inside a string).
 func PrettyJSON(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
-	var buf bytes.Buffer
-	if err := json.Indent(&buf, raw, "", "  "); err != nil {
-		return string(raw)
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return format.Sanitize(string(raw))
 	}
-	return buf.String()
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false) // preserve <, >, & literals; control chars still escaped
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
+		return format.Sanitize(string(raw))
+	}
+	return strings.TrimRight(buf.String(), "\n")
 }
 
 // HighlightJSON syntax-highlights pretty JSON for terminal output. Falls

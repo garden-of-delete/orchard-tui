@@ -11,7 +11,7 @@ import (
 
 const (
 	EnvHost       = "ORCHARD_HOST"
-	EnvAPIKey     = "ORCHARD_API_KEY"
+	EnvAPIKey     = "ORCHARD_TUI_API_KEY"
 	EnvPollFast   = "ORCHARD_POLL_FAST"
 	EnvPollMedium = "ORCHARD_POLL_MEDIUM"
 	EnvPollSlow   = "ORCHARD_POLL_SLOW"

@@ -85,7 +85,7 @@ FLAGS`)
 	fmt.Fprintln(os.Stderr, `
 ENVIRONMENT
   ORCHARD_HOST           orchard base URL (default: http://localhost:9000)
-  ORCHARD_API_KEY        optional x-api-key header value
+  ORCHARD_TUI_API_KEY    optional x-api-key header value
   ORCHARD_POLL_FAST      poll interval for active screens (default: 2s)
   ORCHARD_POLL_MEDIUM    poll interval for header counts (default: 10s)
   ORCHARD_POLL_SLOW      poll interval for stats (default: 60s)

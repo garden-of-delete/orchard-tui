@@ -85,7 +85,7 @@ func (a *App) parseCommand(raw string) tea.Cmd {
 			return uitypes.Replace(a.makeWorkflows(nil))
 		}
 		id := normalizeWorkflowID(args[0])
-		return uitypes.Push(screens.NewWorkflowDetail(a.client, id, a.cfg.PollFast, a.cfg.PollSlow))
+		return uitypes.Push(screens.NewWorkflowDetail(a.client, id, a.cfg.PollFast))
 
 	case "pending":
 		return uitypes.Replace(a.makeWorkflows([]api.Status{api.StatusPending}))
@@ -118,5 +118,5 @@ func normalizeWorkflowID(id string) string {
 }
 
 func (a *App) makeWorkflows(statuses []api.Status) uitypes.Screen {
-	return screens.NewWorkflows(a.client, statuses, a.cfg.PollFast, a.cfg.PollSlow)
+	return screens.NewWorkflows(a.client, statuses, a.cfg.PollFast, a.cfg.PollMedium, a.cfg.PollSlow)
 }

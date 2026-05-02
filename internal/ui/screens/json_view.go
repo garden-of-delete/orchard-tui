@@ -24,11 +24,12 @@ type JSONView struct {
 	pretty   string
 	rendered string
 
-	vp        viewport.Model
-	w, h      int
+	vp   viewport.Model
+	w, h int
 
-	mode   jsonMode
-	search string
+	mode      jsonMode
+	search    string
+	preSearch string // snapshot taken on FilterEnterMsg; restored on FilterCancelMsg
 }
 
 type jsonMode int
@@ -87,16 +88,26 @@ func (v *JSONView) Init() tea.Cmd { return nil }
 func (v *JSONView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
 
+	case uitypes.FilterEnterMsg:
+		v.preSearch = v.search
+		return v, nil
 	case uitypes.FilterChangedMsg:
 		v.search = m.Query
 		v.applyContent()
 		return v, nil
 	case uitypes.FilterCommittedMsg:
 		v.search = m.Query
+		v.preSearch = ""
+		v.applyContent()
+		return v, nil
+	case uitypes.FilterCancelMsg:
+		v.search = v.preSearch
+		v.preSearch = ""
 		v.applyContent()
 		return v, nil
 	case uitypes.FilterClearedMsg:
 		v.search = ""
+		v.preSearch = ""
 		v.applyContent()
 		return v, nil
 
@@ -152,4 +163,3 @@ func humanBytes(n int) string {
 		return fmt.Sprintf("%.1fMB", float64(n)/(1024*1024))
 	}
 }
-

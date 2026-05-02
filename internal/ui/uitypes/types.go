@@ -53,8 +53,11 @@ type PollTickMsg struct {
 // CountsTickMsg fires for the background header-counts refresher.
 type CountsTickMsg struct{ Time time.Time }
 
-// CountsLoadedMsg carries the result of a /v1/stats/counts call.
+// CountsLoadedMsg carries the result of a /v1/stats/counts call. Seq
+// matches the App's countsSeq at issue time; older loaded msgs are
+// dropped on arrival to avoid stale-overwrites.
 type CountsLoadedMsg struct {
+	Seq    int
 	Counts api.StatusCounts
 	Err    error
 }
@@ -75,13 +78,31 @@ type ToastMsg struct {
 	TTL   time.Duration
 }
 
+// ClearToastMsg fires after a toast's TTL elapses. The App carries a
+// monotonic toast ID and only clears the visible toast if ID matches
+// the current one — so a newer toast displayed before the old one's TTL
+// elapses isn't wiped by the older toast's stale clear message.
+type ClearToastMsg struct{ ID int }
+
+// FilterEnterMsg fires when the filter input opens. Screens should
+// snapshot their current filter so FilterCancelMsg can restore it.
+type FilterEnterMsg struct{}
+
 // FilterChangedMsg notifies the active screen as the user types.
 type FilterChangedMsg struct{ Query string }
 
 // FilterCommittedMsg fires when the user presses enter on the filter input.
 type FilterCommittedMsg struct{ Query string }
 
-// FilterClearedMsg tells the active screen to drop its filter.
+// FilterCancelMsg fires when the user esc's the filter input without
+// committing. Screens should restore the filter snapshot taken at
+// FilterEnterMsg — this preserves the previously-committed filter
+// rather than discarding it (vim-like cancel semantics).
+type FilterCancelMsg struct{}
+
+// FilterClearedMsg tells the active screen to drop its filter
+// unconditionally (used when esc is pressed at the root with no screen
+// to pop — clears any committed filter).
 type FilterClearedMsg struct{}
 
 // RequestRefreshMsg asks the active screen to fetch immediately.
@@ -89,9 +110,9 @@ type RequestRefreshMsg struct{}
 
 // Convenience tea.Cmd constructors.
 
-func Push(s Screen) tea.Cmd     { return func() tea.Msg { return PushScreenMsg{Screen: s} } }
-func Pop() tea.Cmd              { return func() tea.Msg { return PopScreenMsg{} } }
-func Replace(s Screen) tea.Cmd  { return func() tea.Msg { return ReplaceScreenMsg{Screen: s} } }
+func Push(s Screen) tea.Cmd    { return func() tea.Msg { return PushScreenMsg{Screen: s} } }
+func Pop() tea.Cmd             { return func() tea.Msg { return PopScreenMsg{} } }
+func Replace(s Screen) tea.Cmd { return func() tea.Msg { return ReplaceScreenMsg{Screen: s} } }
 func Toast(l ToastLevel, t string) tea.Cmd {
 	return func() tea.Msg { return ToastMsg{Level: l, Text: t, TTL: 3 * time.Second} }
 }

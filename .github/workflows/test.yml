@@ -19,6 +19,13 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # golang.design/x/clipboard cgo-compiles clipboard_linux.c which
+      # #includes <X11/Xlib.h>. The Linux stub at runtime is fine when
+      # CGO_ENABLED=0, but `go vet` and `go test -race` both compile cgo
+      # files, so we need the headers present in CI.
+      - name: install libx11-dev
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev
+
       - name: gofmt
         run: |
           unformatted=$(gofmt -l .)

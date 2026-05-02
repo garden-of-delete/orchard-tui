@@ -35,7 +35,6 @@ type WorkflowDetail struct {
 	client     *api.Client
 	workflowID string
 	pollFast   time.Duration
-	pollSlow   time.Duration
 
 	tab WorkflowTab
 
@@ -43,33 +42,38 @@ type WorkflowDetail struct {
 	activities []api.Activity
 	resources  []api.Resource
 
-	tbl     table.Model
-	spin    spinner.Model
-	loading bool
-	err     error
+	tbl      table.Model
+	spin     spinner.Model
+	loading  bool
+	err      error
+	fetchSeq int // monotonic per-fetch seq; loaded msgs older than this are dropped
 
 	w, h int
 }
 
 type workflowActivitiesLoadedMsg struct {
 	id       string
+	seq      int
 	response *api.ActivitiesResponse
 	err      error
 }
 
 type workflowResourcesLoadedMsg struct {
 	id       string
+	seq      int
 	response *api.ResourcesResponse
 	err      error
 }
 
-func NewWorkflowDetail(client *api.Client, workflowID string, fast, slow time.Duration) *WorkflowDetail {
+// NewWorkflowDetail constructs a workflow detail screen. Only the fast
+// poll interval is needed: the screen polls at `fast` while the workflow
+// is non-terminal, and stops polling entirely once it terminates.
+func NewWorkflowDetail(client *api.Client, workflowID string, fast time.Duration) *WorkflowDetail {
 	d := &WorkflowDetail{
 		id:         fmt.Sprintf("wfdetail-%d", time.Now().UnixNano()),
 		client:     client,
 		workflowID: workflowID,
 		pollFast:   fast,
-		pollSlow:   slow,
 		tab:        TabActivities,
 	}
 	d.tbl = table.New(table.WithColumns(activitiesColumns()), table.WithFocused(true), table.WithHeight(10))
@@ -82,15 +86,21 @@ func NewWorkflowDetail(client *api.Client, workflowID string, fast, slow time.Du
 	return d
 }
 
-func (d *WorkflowDetail) ID() string                  { return d.id }
-func (d *WorkflowDetail) Title() string               { return "workflow " + d.workflowID }
+func (d *WorkflowDetail) ID() string { return d.id }
+func (d *WorkflowDetail) Title() string {
+	return "workflow " + format.Sanitize(d.workflowID)
+}
 func (d *WorkflowDetail) PollInterval() time.Duration { return d.pickPoll() }
 
+// pickPoll returns the auto-refresh interval for this screen. When the
+// workflow has reached a terminal state, polling stops entirely (returns
+// zero) — the entity won't transition further on its own, so any
+// continued fetches would be pure waste. Users can still press `r`.
 func (d *WorkflowDetail) pickPoll() time.Duration {
 	if d.workflow == nil || !d.workflow.Status.IsTerminal() {
 		return d.pollFast
 	}
-	return d.pollSlow
+	return 0
 }
 
 func (d *WorkflowDetail) KeyMap() []key.Binding {
@@ -117,8 +127,8 @@ func (d *WorkflowDetail) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
 
 	case workflowActivitiesLoadedMsg:
-		if m.id != d.id {
-			return d, nil
+		if m.id != d.id || m.seq < d.fetchSeq {
+			return d, nil // stale
 		}
 		d.loading = false
 		if m.err != nil {
@@ -134,8 +144,8 @@ func (d *WorkflowDetail) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, nil
 
 	case workflowResourcesLoadedMsg:
-		if m.id != d.id {
-			return d, nil
+		if m.id != d.id || m.seq < d.fetchSeq {
+			return d, nil // stale
 		}
 		d.loading = false
 		if m.err != nil {
@@ -161,6 +171,9 @@ func (d *WorkflowDetail) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, tea.Batch(d.spin.Tick, d.fetchCurrent())
 
 	case spinner.TickMsg:
+		if !d.loading {
+			return d, nil
+		}
 		var cmd tea.Cmd
 		d.spin, cmd = d.spin.Update(m)
 		return d, cmd
@@ -214,7 +227,7 @@ func (d *WorkflowDetail) headerCard() string {
 	now := time.Now().UTC()
 	if d.workflow == nil {
 		return components.Card{
-			Title: "Workflow " + d.workflowID,
+			Title: "Workflow " + format.Sanitize(d.workflowID),
 			Lines: []components.CardLine{{Label: "status", Value: styles.Faint.Render("loading…")}},
 			Width: d.w,
 		}.View()
@@ -227,9 +240,9 @@ func (d *WorkflowDetail) headerCard() string {
 		statusLine += "  " + styles.Faint.Render("("+format.Between(wf.ActivatedAt.Time, wf.TerminatedAt.Time, now)+")")
 	}
 	return components.Card{
-		Title: wf.Name,
+		Title: format.Sanitize(wf.Name),
 		Lines: []components.CardLine{
-			{Label: "id", Value: wf.ID},
+			{Label: "id", Value: format.Sanitize(wf.ID)},
 			{Label: "status", Value: statusLine},
 			{Label: "created", Value: wf.CreatedAt.Time.UTC().Format(time.RFC3339)},
 			{Label: "activated", Value: optTime(wf.ActivatedAt)},
@@ -266,6 +279,8 @@ func (d *WorkflowDetail) fetchCurrent() tea.Cmd {
 }
 
 func (d *WorkflowDetail) fetchActivities() tea.Cmd {
+	d.fetchSeq++
+	seq := d.fetchSeq
 	id := d.id
 	client := d.client
 	wfID := d.workflowID
@@ -273,11 +288,13 @@ func (d *WorkflowDetail) fetchActivities() tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		resp, err := client.GetActivities(ctx, wfID)
-		return workflowActivitiesLoadedMsg{id: id, response: resp, err: err}
+		return workflowActivitiesLoadedMsg{id: id, seq: seq, response: resp, err: err}
 	}
 }
 
 func (d *WorkflowDetail) fetchResources() tea.Cmd {
+	d.fetchSeq++
+	seq := d.fetchSeq
 	id := d.id
 	client := d.client
 	wfID := d.workflowID
@@ -285,7 +302,7 @@ func (d *WorkflowDetail) fetchResources() tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		resp, err := client.GetResources(ctx, wfID)
-		return workflowResourcesLoadedMsg{id: id, response: resp, err: err}
+		return workflowResourcesLoadedMsg{id: id, seq: seq, response: resp, err: err}
 	}
 }
 
@@ -296,13 +313,13 @@ func (d *WorkflowDetail) openSelected() tea.Cmd {
 			return nil
 		}
 		a := d.activities[idx]
-		return uitypes.Push(NewActivityDetail(d.client, a.WorkflowID, a.ActivityID, d.pollFast, d.pollSlow))
+		return uitypes.Push(NewActivityDetail(d.client, a.WorkflowID, a.ActivityID, d.pollFast))
 	}
 	if idx < 0 || idx >= len(d.resources) {
 		return nil
 	}
 	r := d.resources[idx]
-	return uitypes.Push(NewResourceDetail(d.client, r.WorkflowID, r.ResourceID, d.pollFast, d.pollSlow))
+	return uitypes.Push(NewResourceDetail(d.client, r.WorkflowID, r.ResourceID, d.pollFast))
 }
 
 func (d *WorkflowDetail) refreshTable() {
@@ -311,11 +328,11 @@ func (d *WorkflowDetail) refreshTable() {
 		rows := make([]table.Row, 0, len(d.activities))
 		for _, a := range d.activities {
 			rows = append(rows, table.Row{
-				a.ActivityID,
-				format.Trunc(a.Name, 24),
-				shortType(a.ActivityType),
+				format.Sanitize(a.ActivityID),
+				format.Trunc(format.Sanitize(a.Name), 24),
+				format.Sanitize(shortType(a.ActivityType)),
 				styles.StatusPill(a.Status),
-				format.Trunc(a.ResourceID, 6),
+				format.Trunc(format.Sanitize(a.ResourceID), 6),
 				format.RelTime(a.CreatedAt.Time, now),
 				optRel(a.ActivatedAt, now),
 				optRel(a.TerminatedAt, now),
@@ -326,9 +343,9 @@ func (d *WorkflowDetail) refreshTable() {
 		rows := make([]table.Row, 0, len(d.resources))
 		for _, r := range d.resources {
 			rows = append(rows, table.Row{
-				r.ResourceID,
-				format.Trunc(r.Name, 24),
-				shortType(r.ResourceType),
+				format.Sanitize(r.ResourceID),
+				format.Trunc(format.Sanitize(r.Name), 24),
+				format.Sanitize(shortType(r.ResourceType)),
 				styles.StatusPill(r.Status),
 				format.RelTime(r.CreatedAt.Time, now),
 				optRel(r.ActivatedAt, now),
