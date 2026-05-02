@@ -63,7 +63,9 @@ func setupLog(path string) func() {
 		log.SetOutput(io.Discard)
 		return func() {}
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	// 0600: log may contain workflow IDs and orchard error response
+	// bodies; restrict to the running user.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "log:", err)
 		log.SetOutput(io.Discard)

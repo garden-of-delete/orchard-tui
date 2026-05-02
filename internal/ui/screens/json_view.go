@@ -27,17 +27,9 @@ type JSONView struct {
 	vp   viewport.Model
 	w, h int
 
-	mode      jsonMode
 	search    string
 	preSearch string // snapshot taken on FilterEnterMsg; restored on FilterCancelMsg
 }
-
-type jsonMode int
-
-const (
-	jsonModeNormal jsonMode = iota
-	jsonModeSearch
-)
 
 // NewJSONView builds a viewer. awsURL may be empty — when set, it's printed
 // as a top hint so the user can copy it.

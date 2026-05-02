@@ -14,6 +14,7 @@ import (
 
 	"github.com/garden-of-delete/orchard-tui/internal/api"
 	"github.com/garden-of-delete/orchard-tui/internal/config"
+	"github.com/garden-of-delete/orchard-tui/internal/format"
 	"github.com/garden-of-delete/orchard-tui/internal/ui/components"
 	"github.com/garden-of-delete/orchard-tui/internal/ui/nav"
 	"github.com/garden-of-delete/orchard-tui/internal/ui/poll"
@@ -405,6 +406,7 @@ func (a *App) globalBindings() []key.Binding {
 		key.NewBinding(key.WithKeys("3"), key.WithHelp("3", "finished")),
 		key.NewBinding(key.WithKeys("4"), key.WithHelp("4", "canceled")),
 		key.NewBinding(key.WithKeys("5"), key.WithHelp("5", "failed")),
+		key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "stats")),
 		key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 	}
 }
@@ -481,12 +483,10 @@ func (a *App) scheduleToastClear(id int, ttl time.Duration) tea.Cmd {
 }
 
 // truncErr renders an error message short enough to fit comfortably in
-// the footer toast strip on most terminals.
+// the footer toast strip on most terminals. Sanitizes first so any
+// control bytes from underlying error strings (e.g., wrapped errors
+// containing API response bodies) can't inject ANSI sequences, and
+// truncates by rune count to avoid splitting multibyte characters.
 func truncErr(err error) string {
-	const max = 80
-	s := err.Error()
-	if len(s) <= max {
-		return s
-	}
-	return s[:max-1] + "…"
+	return format.Trunc(format.Sanitize(err.Error()), 80)
 }

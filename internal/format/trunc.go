@@ -15,8 +15,7 @@ func Trunc(s string, max int) string {
 		return s
 	}
 	out := make([]rune, 0, max)
-	for i, r := range s {
-		_ = i
+	for _, r := range s {
 		if len(out) == max-1 {
 			break
 		}

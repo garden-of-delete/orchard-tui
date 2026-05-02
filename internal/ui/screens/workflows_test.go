@@ -8,6 +8,54 @@ import (
 	"github.com/garden-of-delete/orchard-tui/internal/ui/uitypes"
 )
 
+// TestApplyFilterDoesNotCorruptRows is a regression test for the slice
+// aliasing bug where applyFilter, after a no-filter pass that sets
+// w.visible = w.rows, would later truncate the alias and append into
+// w.rows's backing array — silently overwriting w.rows.
+func TestApplyFilterDoesNotCorruptRows(t *testing.T) {
+	w := NewWorkflows(nil, nil, time.Second, time.Second, time.Second)
+	w.rows = []api.Workflow{
+		{ID: "wf-1", Name: "alpha", Status: api.StatusRunning},
+		{ID: "wf-2", Name: "beta", Status: api.StatusFinished},
+		{ID: "wf-3", Name: "gamma", Status: api.StatusRunning},
+	}
+	original := append([]api.Workflow(nil), w.rows...)
+
+	// 1. Empty filter — w.visible aliases w.rows.
+	_, _ = w.Update(uitypes.FilterClearedMsg{})
+	if !equalWorkflowSlices(w.rows, original) {
+		t.Fatalf("rows changed after empty filter: %v", w.rows)
+	}
+
+	// 2. Now filter for something that excludes "beta". With the bug
+	// present, the append loop would overwrite w.rows[1] with the next
+	// matching element ("gamma"), corrupting w.rows.
+	_, _ = w.Update(uitypes.FilterCommittedMsg{Query: "alpha"})
+	if !equalWorkflowSlices(w.rows, original) {
+		t.Errorf("rows corrupted by filter pass: got %v, want %v", w.rows, original)
+	}
+
+	// 3. Cycle through more filter changes; rows must remain untouched.
+	for _, q := range []string{"gamma", "running", "finished", ""} {
+		_, _ = w.Update(uitypes.FilterCommittedMsg{Query: q})
+		if !equalWorkflowSlices(w.rows, original) {
+			t.Errorf("rows corrupted after filter %q: got %v, want %v", q, w.rows, original)
+		}
+	}
+}
+
+func equalWorkflowSlices(a, b []api.Workflow) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].ID != b[i].ID || a[i].Name != b[i].Name || a[i].Status != b[i].Status {
+			return false
+		}
+	}
+	return true
+}
+
 // TestWorkflowsFilterCancelRestores exercises the vim-like cancel
 // semantics for `/`-mode: opening the filter, typing into it, then
 // canceling restores the previously-committed filter rather than

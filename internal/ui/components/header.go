@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/garden-of-delete/orchard-tui/internal/api"
+	"github.com/garden-of-delete/orchard-tui/internal/format"
 	"github.com/garden-of-delete/orchard-tui/internal/ui/styles"
 )
 
@@ -24,7 +25,10 @@ func (h Header) View() string {
 		return ""
 	}
 
-	left := lipgloss.NewStyle().Bold(true).Render("orchard") + styles.Faint.Render(" • "+h.BaseURL)
+	// BaseURL comes from env (ORCHARD_HOST). config.Load already
+	// rejects control bytes there, but sanitize defensively in case the
+	// path ever changes.
+	left := lipgloss.NewStyle().Bold(true).Render("orchard") + styles.Faint.Render(" • "+format.Sanitize(h.BaseURL))
 
 	parts := []string{}
 	for _, s := range []api.Status{
@@ -33,6 +37,8 @@ func (h Header) View() string {
 		api.StatusFinished,
 		api.StatusCanceled,
 		api.StatusFailed,
+		api.StatusCascadeFailed,
+		api.StatusTimeout,
 	} {
 		if c, ok := h.Counts[s]; ok && c > 0 {
 			parts = append(parts, fmt.Sprintf("%s%d", styles.StatusGlyphColored(s), c))

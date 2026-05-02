@@ -228,11 +228,11 @@ func (w *Workflows) View() string {
 	var head string
 	switch {
 	case w.err != nil:
-		head = lipgloss.NewStyle().Foreground(styles.Error).Render("error: " + w.err.Error())
+		head = lipgloss.NewStyle().Foreground(styles.Error).Render("error: " + format.Sanitize(w.err.Error()))
 	case w.loading && len(w.rows) == 0:
 		head = w.spin.View() + " loading workflows…"
 	case len(w.visible) == 0 && w.filter != "":
-		head = styles.Faint.Render(fmt.Sprintf("No matches for /%s", w.filter))
+		head = styles.Faint.Render(fmt.Sprintf("No matches for /%s", format.Sanitize(w.filter)))
 	case len(w.visible) == 0:
 		head = styles.Faint.Render("No workflows yet — start one with the orchard API.")
 	default:
@@ -284,17 +284,23 @@ func (w *Workflows) selectedWorkflow() (api.Workflow, bool) {
 func (w *Workflows) applyFilter() {
 	if w.filter == "" {
 		w.visible = w.rows
-	} else {
-		needle := strings.ToLower(w.filter)
-		w.visible = w.visible[:0]
-		for _, r := range w.rows {
-			if strings.Contains(strings.ToLower(r.ID), needle) ||
-				strings.Contains(strings.ToLower(r.Name), needle) ||
-				strings.Contains(strings.ToLower(string(r.Status)), needle) {
-				w.visible = append(w.visible, r)
-			}
+		w.refreshTable()
+		return
+	}
+	// Allocate a fresh slice rather than reusing w.visible's backing
+	// array. When the previous applyFilter call took the empty-filter
+	// branch, w.visible aliased w.rows; reslicing to [:0] and then
+	// appending would silently corrupt w.rows in place.
+	needle := strings.ToLower(w.filter)
+	filtered := make([]api.Workflow, 0, len(w.rows))
+	for _, r := range w.rows {
+		if strings.Contains(strings.ToLower(r.ID), needle) ||
+			strings.Contains(strings.ToLower(r.Name), needle) ||
+			strings.Contains(strings.ToLower(string(r.Status)), needle) {
+			filtered = append(filtered, r)
 		}
 	}
+	w.visible = filtered
 	w.refreshTable()
 }
 
@@ -368,7 +374,7 @@ func filterNote(f string) string {
 	if f == "" {
 		return ""
 	}
-	return " · /" + f
+	return " · /" + format.Sanitize(f)
 }
 
 func workflowsTableStyles() table.Styles {
