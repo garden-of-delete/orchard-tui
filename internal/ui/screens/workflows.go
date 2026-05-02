@@ -26,11 +26,20 @@ type Workflows struct {
 	id       string
 	client   *api.Client
 	statuses []api.Status
-	pollGap  time.Duration
 
-	rows    []api.Workflow // last-fetched (sorted)
-	visible []api.Workflow // after filter
-	filter  string
+	// Poll cadences carried forward to pushed child screens. pollGap is
+	// this screen's own auto-refresh interval, derived from statuses via
+	// pickPoll.
+	pollFast   time.Duration
+	pollMedium time.Duration
+	pollSlow   time.Duration
+	pollGap    time.Duration
+
+	rows      []api.Workflow // last-fetched (sorted)
+	visible   []api.Workflow // after filter
+	filter    string
+	preFilter string // snapshot taken on FilterEnterMsg; restored on FilterCancelMsg
+	fetchSeq  int    // monotonic per-fetch seq; loaded msgs older than this are dropped
 
 	tbl     table.Model
 	spin    spinner.Model
@@ -39,21 +48,36 @@ type Workflows struct {
 	w, h    int
 }
 
+// workflowsPerPage is how many rows the screen requests in a single
+// fetch. Orchard's server-side default is 50; we ask for substantially
+// more so most installations never hit the cap. When a fetch returns
+// exactly this many rows, the screen shows a "may be truncated" hint.
+const workflowsPerPage = 200
+
 // workflowsLoadedMsg carries the result of a fetch.
 type workflowsLoadedMsg struct {
 	id   string
+	seq  int // matches the screen's fetchSeq at issue time
 	rows []api.Workflow
 	err  error
 }
 
 // NewWorkflows builds a Workflows screen filtered to the given statuses.
 // Pass nil for statuses to show everything.
-func NewWorkflows(client *api.Client, statuses []api.Status, fastPoll, slowPoll time.Duration) *Workflows {
+//
+// Cadence picked by pickPoll:
+//   - filter contains running or pending → fast
+//   - empty filter ("all") → medium
+//   - filter is purely terminal statuses → slow
+func NewWorkflows(client *api.Client, statuses []api.Status, fastPoll, mediumPoll, slowPoll time.Duration) *Workflows {
 	w := &Workflows{
-		id:       fmt.Sprintf("workflows-%d", time.Now().UnixNano()),
-		client:   client,
-		statuses: statuses,
-		pollGap:  pickPoll(statuses, fastPoll, slowPoll),
+		id:         fmt.Sprintf("workflows-%d", time.Now().UnixNano()),
+		client:     client,
+		statuses:   statuses,
+		pollFast:   fastPoll,
+		pollMedium: mediumPoll,
+		pollSlow:   slowPoll,
+		pollGap:    pickPoll(statuses, fastPoll, mediumPoll, slowPoll),
 	}
 
 	cols := []table.Column{
@@ -76,16 +100,18 @@ func NewWorkflows(client *api.Client, statuses []api.Status, fastPoll, slowPoll 
 	return w
 }
 
-func pickPoll(statuses []api.Status, fast, slow time.Duration) time.Duration {
+func pickPoll(statuses []api.Status, fast, medium, slow time.Duration) time.Duration {
 	for _, s := range statuses {
 		if s == api.StatusRunning || s == api.StatusPending {
 			return fast
 		}
 	}
 	if len(statuses) == 0 {
-		// "All" view: balance freshness against load.
-		return slow
+		// "All" view mixes active and terminal entities — keep it fresh
+		// enough that newly-created workflows show up promptly.
+		return medium
 	}
+	// Filter is purely terminal (finished/canceled/failed/...).
 	return slow
 }
 
@@ -119,8 +145,8 @@ func (w *Workflows) Refresh() tea.Cmd { return w.fetchCmd() }
 func (w *Workflows) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
 	case workflowsLoadedMsg:
-		if m.id != w.id {
-			return w, nil
+		if m.id != w.id || m.seq < w.fetchSeq {
+			return w, nil // stale (older fetch overtaken by a newer one)
 		}
 		w.loading = false
 		if m.err != nil {
@@ -145,6 +171,10 @@ func (w *Workflows) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		w.loading = true
 		return w, tea.Batch(w.spin.Tick, w.fetchCmd())
 
+	case uitypes.FilterEnterMsg:
+		w.preFilter = w.filter
+		return w, nil
+
 	case uitypes.FilterChangedMsg:
 		w.filter = m.Query
 		w.applyFilter()
@@ -152,15 +182,26 @@ func (w *Workflows) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case uitypes.FilterCommittedMsg:
 		w.filter = m.Query
+		w.preFilter = ""
+		w.applyFilter()
+		return w, nil
+
+	case uitypes.FilterCancelMsg:
+		w.filter = w.preFilter
+		w.preFilter = ""
 		w.applyFilter()
 		return w, nil
 
 	case uitypes.FilterClearedMsg:
 		w.filter = ""
+		w.preFilter = ""
 		w.applyFilter()
 		return w, nil
 
 	case spinner.TickMsg:
+		if !w.loading {
+			return w, nil // don't keep the cmd tree alive when nothing's spinning
+		}
 		var cmd tea.Cmd
 		w.spin, cmd = w.spin.Update(m)
 		return w, cmd
@@ -169,7 +210,7 @@ func (w *Workflows) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.String() {
 		case "enter":
 			if wf, ok := w.selectedWorkflow(); ok {
-				return w, uitypes.Push(NewWorkflowDetail(w.client, wf.ID, w.pollGap, w.pollGap*5))
+				return w, uitypes.Push(NewWorkflowDetail(w.client, wf.ID, w.pollFast))
 			}
 			return w, nil
 		}
@@ -195,7 +236,11 @@ func (w *Workflows) View() string {
 	case len(w.visible) == 0:
 		head = styles.Faint.Render("No workflows yet — start one with the orchard API.")
 	default:
-		head = styles.Faint.Render(fmt.Sprintf("%d workflow%s%s", len(w.visible), plural(len(w.visible)), filterNote(w.filter)))
+		summary := fmt.Sprintf("%d workflow%s%s", len(w.visible), plural(len(w.visible)), filterNote(w.filter))
+		if len(w.rows) >= workflowsPerPage {
+			summary += fmt.Sprintf("  (showing first %d — narrow with /, a status filter, or :wf <id>)", workflowsPerPage)
+		}
+		head = styles.Faint.Render(summary)
 	}
 	return head + "\n" + w.tbl.View()
 }
@@ -210,6 +255,8 @@ func (w *Workflows) tickCmd() tea.Cmd {
 }
 
 func (w *Workflows) fetchCmd() tea.Cmd {
+	w.fetchSeq++
+	seq := w.fetchSeq
 	id := w.id
 	client := w.client
 	statuses := w.statuses
@@ -220,8 +267,9 @@ func (w *Workflows) fetchCmd() tea.Cmd {
 			Statuses: statuses,
 			OrderBy:  api.OrderByCreatedAt,
 			Order:    api.OrderDesc,
+			PerPage:  workflowsPerPage,
 		})
-		return workflowsLoadedMsg{id: id, rows: rows, err: err}
+		return workflowsLoadedMsg{id: id, seq: seq, rows: rows, err: err}
 	}
 }
 
@@ -255,8 +303,8 @@ func (w *Workflows) refreshTable() {
 	rows := make([]table.Row, 0, len(w.visible))
 	for _, wf := range w.visible {
 		rows = append(rows, table.Row{
-			format.Trunc(wf.ID, 32),
-			format.Trunc(wf.Name, 24),
+			format.Trunc(format.Sanitize(wf.ID), 32),
+			format.Trunc(format.Sanitize(wf.Name), 24),
 			styles.StatusPill(wf.Status),
 			format.RelTime(wf.CreatedAt.Time, now),
 			activatedRel(wf, now),

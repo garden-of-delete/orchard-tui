@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -94,6 +95,57 @@ func TestHealthError(t *testing.T) {
 	}
 	if apiErr.Body != "kaboom" {
 		t.Errorf("Body = %q", apiErr.Body)
+	}
+}
+
+// TestPathParamsEscaped verifies that user-controlled path components
+// (workflow / activity / resource IDs) are URL-escaped, so a stray '?',
+// '/', '#', etc. can't tear the request URL into a different shape.
+func TestPathParamsEscaped(t *testing.T) {
+	var seenWire string
+	c, _ := fakeServer(t, map[string]http.HandlerFunc{
+		"GET /v1/workflow/": func(w http.ResponseWriter, r *http.Request) {
+			// RequestURI is the raw wire form, so percent-escapes are
+			// preserved (r.URL.Path would already be decoded).
+			seenWire = r.RequestURI
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"workflow":{"id":"x","name":"x","status":"running","createdAt":"2026-01-01T00:00:00","activatedAt":null,"terminatedAt":null},"activities":[]}`))
+		},
+	})
+
+	if _, err := c.GetActivities(context.Background(), "wf-foo?break=true/bar"); err != nil {
+		t.Fatalf("GetActivities: %v", err)
+	}
+	// '?' must be %3F and '/' must be %2F so neither tears the URL.
+	if !strings.Contains(seenWire, "%3F") || !strings.Contains(seenWire, "%2F") {
+		t.Errorf("wire = %q, want %%3F and %%2F", seenWire)
+	}
+	if !strings.HasSuffix(seenWire, "/activities") {
+		t.Errorf("wire = %q, want ending in /activities", seenWire)
+	}
+}
+
+// TestAPIErrorSanitizesBody verifies that control bytes in an orchard
+// error response body are stripped from the formatted Error() string,
+// preventing ANSI injection into the toast / inline error display.
+func TestAPIErrorSanitizesBody(t *testing.T) {
+	c, _ := fakeServer(t, map[string]http.HandlerFunc{
+		"GET /__status": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("evil\x1b[2Jpayload"))
+		},
+	})
+	err := c.Health(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	got := err.Error()
+	if strings.ContainsRune(got, '\x1b') {
+		t.Errorf("Error() leaked ESC byte: %q", got)
+	}
+	if !strings.Contains(got, "evil·[2Jpayload") {
+		t.Errorf("Error() = %q, want sanitized body", got)
 	}
 }
 
@@ -433,6 +485,42 @@ func TestOrchardTimeUnmarshalNull(t *testing.T) {
 	}
 	if !ot.IsZero() {
 		t.Error("expected zero")
+	}
+}
+
+// TestGetJSONCapsResponseSize verifies the LimitReader cap on the
+// success path: a response larger than maxResponseBytes errors instead
+// of OOMing the process.
+func TestGetJSONCapsResponseSize(t *testing.T) {
+	c, _ := fakeServer(t, map[string]http.HandlerFunc{
+		"GET /v1/workflow": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			// Stream an open-ended JSON array padded with garbage past
+			// the cap; the decoder will EOF before it sees the closing
+			// bracket.
+			_, _ = w.Write([]byte(`[`))
+			big := make([]byte, 4096)
+			for i := range big {
+				big[i] = 'x'
+			}
+			written := 1 // for the "["
+			for written < maxResponseBytes+8192 {
+				_, _ = w.Write([]byte(`{"id":"wf-`))
+				_, _ = w.Write(big)
+				_, _ = w.Write([]byte(`","name":"x","status":"running","createdAt":"2026-01-01T00:00:00","activatedAt":null,"terminatedAt":null},`))
+				written += 4096 + 110
+			}
+		},
+	})
+
+	_, err := c.ListWorkflows(context.Background(), ListWorkflowsOpts{})
+	if err == nil {
+		t.Fatal("expected error from oversize response, got nil")
+	}
+	// Don't pin the error string — Go's encoding/json may surface this
+	// as ErrUnexpectedEOF or as a decode error wrapped in our prefix.
+	if !strings.Contains(err.Error(), "decode /v1/workflow") {
+		t.Errorf("error = %q, want containing %q", err.Error(), "decode /v1/workflow")
 	}
 }
 

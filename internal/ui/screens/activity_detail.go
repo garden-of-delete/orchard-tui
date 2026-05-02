@@ -26,10 +26,10 @@ type ActivityDetail struct {
 	workflowID string
 	activityID string
 	pollFast   time.Duration
-	pollSlow   time.Duration
 
 	activity *api.Activity
 	attempts []api.ActivityAttempt
+	fetchSeq int // monotonic per-fetch seq; older loaded msgs are dropped
 
 	tbl     table.Model
 	spin    spinner.Model
@@ -40,18 +40,20 @@ type ActivityDetail struct {
 
 type activityLoadedMsg struct {
 	id       string
+	seq      int
 	response *api.ActivityAttemptsResponse
 	err      error
 }
 
-func NewActivityDetail(client *api.Client, workflowID, activityID string, fast, slow time.Duration) *ActivityDetail {
+// NewActivityDetail constructs an activity detail screen. Only the fast
+// poll interval is needed: polling stops once the activity terminates.
+func NewActivityDetail(client *api.Client, workflowID, activityID string, fast time.Duration) *ActivityDetail {
 	d := &ActivityDetail{
 		id:         fmt.Sprintf("actdetail-%d", time.Now().UnixNano()),
 		client:     client,
 		workflowID: workflowID,
 		activityID: activityID,
 		pollFast:   fast,
-		pollSlow:   slow,
 	}
 	d.tbl = table.New(table.WithColumns(attemptsColumns()), table.WithFocused(true), table.WithHeight(10))
 	d.tbl.SetStyles(workflowsTableStyles())
@@ -63,15 +65,19 @@ func NewActivityDetail(client *api.Client, workflowID, activityID string, fast, 
 	return d
 }
 
-func (d *ActivityDetail) ID() string                  { return d.id }
-func (d *ActivityDetail) Title() string               { return "wf " + d.workflowID + " · activity " + d.activityID }
+func (d *ActivityDetail) ID() string { return d.id }
+func (d *ActivityDetail) Title() string {
+	return "wf " + format.Sanitize(d.workflowID) + " · activity " + format.Sanitize(d.activityID)
+}
 func (d *ActivityDetail) PollInterval() time.Duration { return d.pickPoll() }
 
+// pickPoll returns the auto-refresh interval. Terminal activities stop
+// auto-polling entirely; the user can still press `r` to refresh.
 func (d *ActivityDetail) pickPoll() time.Duration {
 	if d.activity == nil || !d.activity.Status.IsTerminal() {
 		return d.pollFast
 	}
-	return d.pollSlow
+	return 0
 }
 
 func (d *ActivityDetail) KeyMap() []key.Binding {
@@ -96,8 +102,8 @@ func (d *ActivityDetail) Refresh() tea.Cmd { return d.fetchCmd() }
 func (d *ActivityDetail) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
 	case activityLoadedMsg:
-		if m.id != d.id {
-			return d, nil
+		if m.id != d.id || m.seq < d.fetchSeq {
+			return d, nil // stale
 		}
 		d.loading = false
 		if m.err != nil {
@@ -121,6 +127,9 @@ func (d *ActivityDetail) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, tea.Batch(d.spin.Tick, d.fetchCmd())
 
 	case spinner.TickMsg:
+		if !d.loading {
+			return d, nil
+		}
 		var cmd tea.Cmd
 		d.spin, cmd = d.spin.Update(m)
 		return d, cmd
@@ -159,18 +168,18 @@ func (d *ActivityDetail) View() string {
 func (d *ActivityDetail) headerCard() string {
 	if d.activity == nil {
 		return components.Card{
-			Title: "Activity " + d.activityID,
+			Title: "Activity " + format.Sanitize(d.activityID),
 			Lines: []components.CardLine{{Label: "status", Value: styles.Faint.Render("loading…")}},
 			Width: d.w,
 		}.View()
 	}
 	a := d.activity
 	return components.Card{
-		Title: a.Name,
+		Title: format.Sanitize(a.Name),
 		Lines: []components.CardLine{
-			{Label: "id", Value: a.ActivityID},
-			{Label: "type", Value: a.ActivityType},
-			{Label: "resource", Value: a.ResourceID},
+			{Label: "id", Value: format.Sanitize(a.ActivityID)},
+			{Label: "type", Value: format.Sanitize(a.ActivityType)},
+			{Label: "resource", Value: format.Sanitize(a.ResourceID)},
 			{Label: "status", Value: styles.StatusPill(a.Status)},
 			{Label: "max attempts", Value: fmt.Sprintf("%d", a.MaxAttempt)},
 			{Label: "created", Value: a.CreatedAt.Time.UTC().Format(time.RFC3339)},
@@ -187,6 +196,8 @@ func (d *ActivityDetail) tickCmd() tea.Cmd {
 }
 
 func (d *ActivityDetail) fetchCmd() tea.Cmd {
+	d.fetchSeq++
+	seq := d.fetchSeq
 	id := d.id
 	client := d.client
 	wfID := d.workflowID
@@ -195,7 +206,7 @@ func (d *ActivityDetail) fetchCmd() tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		resp, err := client.GetActivity(ctx, wfID, actID)
-		return activityLoadedMsg{id: id, response: resp, err: err}
+		return activityLoadedMsg{id: id, seq: seq, response: resp, err: err}
 	}
 }
 
@@ -206,7 +217,10 @@ func (d *ActivityDetail) openSpec() tea.Cmd {
 	}
 	att := d.attempts[idx]
 	return uitypes.Push(NewJSONView(
-		fmt.Sprintf("attempt %d spec — wf %s · activity %s", att.Attempt, d.workflowID, d.activityID),
+		fmt.Sprintf("attempt %d spec — wf %s · activity %s",
+			att.Attempt,
+			format.Sanitize(d.workflowID),
+			format.Sanitize(d.activityID)),
 		att.AttemptSpec,
 		awsURLForActivity(d.activity, att),
 	))
@@ -219,8 +233,8 @@ func (d *ActivityDetail) refreshTable() {
 		rows = append(rows, table.Row{
 			fmt.Sprintf("%d", a.Attempt),
 			styles.StatusPill(a.Status),
-			format.Trunc(format.FirstLine(a.ErrorMessage), 40),
-			format.Trunc(a.ResourceID, 6),
+			format.Trunc(format.Sanitize(format.FirstLine(a.ErrorMessage)), 40),
+			format.Trunc(format.Sanitize(a.ResourceID), 6),
 			fmt.Sprintf("%d", a.ResourceInstanceAttempt),
 			format.RelTime(a.CreatedAt.Time, now),
 			optRel(a.ActivatedAt, now),

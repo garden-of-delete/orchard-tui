@@ -8,7 +8,7 @@ func TestCompleteCommand(t *testing.T) {
 		want          string
 		wantMatchesGE int
 	}{
-		{"", "", 12},     // any prefix matches all keywords; LCP of all is ""
+		{"", "", 12}, // any prefix matches all keywords; LCP of all is ""
 		{"sta", "stats ", 1},
 		{"q", "quit ", 1},
 		{"f", "f", 2},        // "failed" + "finished" → LCP is "f"

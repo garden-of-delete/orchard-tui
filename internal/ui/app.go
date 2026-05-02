@@ -44,6 +44,12 @@ type App struct {
 	toastErr bool
 	toastAt  time.Time
 	toastTTL time.Duration
+	toastID  int // monotonic; matched against ClearToastMsg.ID
+
+	// countsErrShown latches so we toast once per outage, not on every retry.
+	// Reset on the next successful counts fetch.
+	countsErrShown bool
+	countsSeq      int // monotonic per-fetch seq for /v1/stats/counts
 
 	globals []key.Binding
 }
@@ -51,15 +57,20 @@ type App struct {
 // New creates the root model.
 func New(cfg config.Config) *App {
 	a := &App{
-		cfg:     cfg,
-		client:  api.New(cfg.Host, cfg.APIKey),
-		cmdbar:  components.NewCmdBar(":"),
-		filter:  components.NewCmdBar("/"),
+		cfg:    cfg,
+		client: api.New(cfg.Host, cfg.APIKey),
+		cmdbar: components.NewCmdBar(":"),
+		filter: components.NewCmdBar("/"),
+		// focused defaults to true: terminals that don't emit focus
+		// events (basic xterm, some serial consoles) leave us at this
+		// initial value forever, which is the safe choice — polling
+		// keeps running. Modern terminals (kitty/iTerm/alacritty/etc.)
+		// will toggle this via tea.WithReportFocus().
 		focused: true,
 	}
 	a.globals = a.globalBindings()
 
-	first := screens.NewWorkflows(a.client, nil, cfg.PollFast, cfg.PollSlow)
+	first := screens.NewWorkflows(a.client, nil, cfg.PollFast, cfg.PollMedium, cfg.PollSlow)
 	a.stack.Push(first)
 	return a
 }
@@ -114,10 +125,18 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, tea.Batch(m.Screen.Init(), a.tickFor(m.Screen))
 
 	case uitypes.ToastMsg:
+		a.toastID++
 		a.toast = m.Text
 		a.toastErr = m.Level == uitypes.ToastErr
 		a.toastAt = time.Now()
 		a.toastTTL = m.TTL
+		return a, a.scheduleToastClear(a.toastID, m.TTL)
+
+	case uitypes.ClearToastMsg:
+		// Only clear if no newer toast has overwritten ours.
+		if m.ID == a.toastID {
+			a.toast = ""
+		}
 		return a, nil
 
 	case uitypes.CountsTickMsg:
@@ -127,9 +146,18 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.countsTickCmd()
 
 	case uitypes.CountsLoadedMsg:
-		if m.Err == nil {
-			a.counts = m.Counts
+		if m.Seq < a.countsSeq {
+			return a, nil // stale
 		}
+		if m.Err != nil {
+			if a.countsErrShown {
+				return a, nil
+			}
+			a.countsErrShown = true
+			return a, uitypes.Toast(uitypes.ToastErr, "header counts: "+truncErr(m.Err))
+		}
+		a.counts = m.Counts
+		a.countsErrShown = false
 		return a, nil
 
 	case uitypes.PollTickMsg:
@@ -168,24 +196,30 @@ func (a *App) View() string {
 	}.View()
 
 	body := a.renderBody()
-
-	footer := a.renderFooter()
-
-	out := lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
-
 	if a.mode == uitypes.ModeHelp {
-		help := components.Help{
+		// Render help inside the body area so the header (status counts)
+		// and footer remain visible behind it.
+		body = components.Help{
 			Globals: a.globals,
 			Screen:  a.activeKeyMap(),
 			Width:   a.w,
-			Height:  a.h,
+			Height:  a.bodyHeight(),
 		}.View()
-		// Overlay help in the center; lipgloss.Place returns a full-screen
-		// background. Render it last to overlay.
-		return help
 	}
 
-	return out
+	footer := a.renderFooter()
+
+	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+}
+
+// bodyHeight returns the height available for screen body content, after
+// reserving rows for the header and footer chrome.
+func (a *App) bodyHeight() int {
+	h := a.h - chromeReserveAll
+	if h < 1 {
+		h = 1
+	}
+	return h
 }
 
 // --- chrome rendering ---
@@ -228,6 +262,20 @@ func (a *App) activeKeyMap() []key.Binding {
 	return nil
 }
 
+// activeScreenBindsKey reports whether the active screen's KeyMap
+// advertises the given key (e.g., "/"). Used to gate global keys
+// that only make sense when the screen subscribes to their messages.
+func (a *App) activeScreenBindsKey(want string) bool {
+	for _, b := range a.activeKeyMap() {
+		for _, k := range b.Keys() {
+			if k == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (a *App) activeTitle() string {
 	if top, ok := a.stack.Top(); ok {
 		return top.Title()
@@ -266,7 +314,9 @@ func (a *App) handleKey(m tea.KeyMsg) (tea.Cmd, bool) {
 		case "esc":
 			a.filter.Reset()
 			a.mode = uitypes.ModeNormal
-			return func() tea.Msg { return uitypes.FilterClearedMsg{} }, true
+			// Restore the screen's pre-filter snapshot rather than
+			// clearing — vim-like cancel.
+			return func() tea.Msg { return uitypes.FilterCancelMsg{} }, true
 		case "enter":
 			q := a.filter.Value()
 			a.filter.Reset()
@@ -297,10 +347,17 @@ func (a *App) handleKey(m tea.KeyMsg) (tea.Cmd, bool) {
 		a.mode = uitypes.ModeCommand
 		return nil, true
 	case "/":
+		// Only enter filter mode if the active screen advertises `/`
+		// in its key map — otherwise the input bar would intercept
+		// keystrokes that the screen has nothing to do with.
+		if !a.activeScreenBindsKey("/") {
+			return nil, true
+		}
 		a.filter.Reset()
 		a.filter.SetWidth(a.w)
 		a.mode = uitypes.ModeFilter
-		return nil, true
+		// Tell the active screen to snapshot its filter so esc can restore.
+		return func() tea.Msg { return uitypes.FilterEnterMsg{} }, true
 	case "?":
 		a.mode = uitypes.ModeHelp
 		return nil, true
@@ -311,6 +368,11 @@ func (a *App) handleKey(m tea.KeyMsg) (tea.Cmd, bool) {
 		}
 		return func() tea.Msg { return uitypes.FilterClearedMsg{} }, true
 	case "r":
+		// Only refresh if the active screen advertises `r` — JSON
+		// viewer (and any future static content) doesn't.
+		if !a.activeScreenBindsKey("r") {
+			return nil, true
+		}
 		return func() tea.Msg { return uitypes.RequestRefreshMsg{} }, true
 	case "1":
 		return uitypes.Replace(a.makeWorkflows([]api.Status{api.StatusPending})), true
@@ -365,12 +427,8 @@ func (a *App) propagateSize() {
 	if a.w == 0 || a.h == 0 {
 		return
 	}
-	bodyH := a.h - chromeReserveAll
-	if bodyH < 1 {
-		bodyH = 1
-	}
 	if top, ok := a.stack.Top(); ok {
-		top.SetSize(a.w, bodyH)
+		top.SetSize(a.w, a.bodyHeight())
 	}
 }
 
@@ -396,12 +454,14 @@ func (a *App) tickFor(s uitypes.Screen) tea.Cmd {
 }
 
 func (a *App) fetchCountsCmd() tea.Cmd {
+	a.countsSeq++
+	seq := a.countsSeq
 	client := a.client
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		c, err := client.GetCounts(ctx, 0)
-		return uitypes.CountsLoadedMsg{Counts: c, Err: err}
+		return uitypes.CountsLoadedMsg{Seq: seq, Counts: c, Err: err}
 	}
 }
 
@@ -411,3 +471,22 @@ func (a *App) countsTickCmd() tea.Cmd {
 	})
 }
 
+func (a *App) scheduleToastClear(id int, ttl time.Duration) tea.Cmd {
+	if ttl <= 0 {
+		return nil
+	}
+	return tea.Tick(ttl, func(time.Time) tea.Msg {
+		return uitypes.ClearToastMsg{ID: id}
+	})
+}
+
+// truncErr renders an error message short enough to fit comfortably in
+// the footer toast strip on most terminals.
+func truncErr(err error) string {
+	const max = 80
+	s := err.Error()
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-1] + "…"
+}

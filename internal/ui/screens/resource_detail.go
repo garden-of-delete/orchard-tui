@@ -26,32 +26,34 @@ type ResourceDetail struct {
 	workflowID string
 	resourceID string
 	pollFast   time.Duration
-	pollSlow   time.Duration
 
 	resource  *api.Resource
 	instances []api.ResourceInstance
 
-	tbl     table.Model
-	spin    spinner.Model
-	loading bool
-	err     error
-	w, h    int
+	tbl      table.Model
+	spin     spinner.Model
+	loading  bool
+	err      error
+	fetchSeq int // monotonic per-fetch seq; older loaded msgs are dropped
+	w, h     int
 }
 
 type resourceLoadedMsg struct {
 	id       string
+	seq      int
 	response *api.ResourceInstancesResponse
 	err      error
 }
 
-func NewResourceDetail(client *api.Client, workflowID, resourceID string, fast, slow time.Duration) *ResourceDetail {
+// NewResourceDetail constructs a resource detail screen. Only the fast
+// poll interval is needed: polling stops once the resource terminates.
+func NewResourceDetail(client *api.Client, workflowID, resourceID string, fast time.Duration) *ResourceDetail {
 	d := &ResourceDetail{
 		id:         fmt.Sprintf("rscdetail-%d", time.Now().UnixNano()),
 		client:     client,
 		workflowID: workflowID,
 		resourceID: resourceID,
 		pollFast:   fast,
-		pollSlow:   slow,
 	}
 	d.tbl = table.New(table.WithColumns(instancesColumns()), table.WithFocused(true), table.WithHeight(10))
 	d.tbl.SetStyles(workflowsTableStyles())
@@ -63,15 +65,19 @@ func NewResourceDetail(client *api.Client, workflowID, resourceID string, fast, 
 	return d
 }
 
-func (d *ResourceDetail) ID() string                  { return d.id }
-func (d *ResourceDetail) Title() string               { return "wf " + d.workflowID + " · resource " + d.resourceID }
+func (d *ResourceDetail) ID() string { return d.id }
+func (d *ResourceDetail) Title() string {
+	return "wf " + format.Sanitize(d.workflowID) + " · resource " + format.Sanitize(d.resourceID)
+}
 func (d *ResourceDetail) PollInterval() time.Duration { return d.pickPoll() }
 
+// pickPoll returns the auto-refresh interval. Terminal resources stop
+// auto-polling entirely; the user can still press `r` to refresh.
 func (d *ResourceDetail) pickPoll() time.Duration {
 	if d.resource == nil || !d.resource.Status.IsTerminal() {
 		return d.pollFast
 	}
-	return d.pollSlow
+	return 0
 }
 
 func (d *ResourceDetail) KeyMap() []key.Binding {
@@ -96,8 +102,8 @@ func (d *ResourceDetail) Refresh() tea.Cmd { return d.fetchCmd() }
 func (d *ResourceDetail) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
 	case resourceLoadedMsg:
-		if m.id != d.id {
-			return d, nil
+		if m.id != d.id || m.seq < d.fetchSeq {
+			return d, nil // stale
 		}
 		d.loading = false
 		if m.err != nil {
@@ -121,6 +127,9 @@ func (d *ResourceDetail) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, tea.Batch(d.spin.Tick, d.fetchCmd())
 
 	case spinner.TickMsg:
+		if !d.loading {
+			return d, nil
+		}
 		var cmd tea.Cmd
 		d.spin, cmd = d.spin.Update(m)
 		return d, cmd
@@ -158,17 +167,17 @@ func (d *ResourceDetail) View() string {
 func (d *ResourceDetail) headerCard() string {
 	if d.resource == nil {
 		return components.Card{
-			Title: "Resource " + d.resourceID,
+			Title: "Resource " + format.Sanitize(d.resourceID),
 			Lines: []components.CardLine{{Label: "status", Value: styles.Faint.Render("loading…")}},
 			Width: d.w,
 		}.View()
 	}
 	r := d.resource
 	return components.Card{
-		Title: r.Name,
+		Title: format.Sanitize(r.Name),
 		Lines: []components.CardLine{
-			{Label: "id", Value: r.ResourceID},
-			{Label: "type", Value: r.ResourceType},
+			{Label: "id", Value: format.Sanitize(r.ResourceID)},
+			{Label: "type", Value: format.Sanitize(r.ResourceType)},
 			{Label: "status", Value: styles.StatusPill(r.Status)},
 			{Label: "max attempts", Value: fmt.Sprintf("%d", r.MaxAttempt)},
 			{Label: "terminate after", Value: fmt.Sprintf("%.1fh", r.TerminateAfter)},
@@ -186,6 +195,8 @@ func (d *ResourceDetail) tickCmd() tea.Cmd {
 }
 
 func (d *ResourceDetail) fetchCmd() tea.Cmd {
+	d.fetchSeq++
+	seq := d.fetchSeq
 	id := d.id
 	client := d.client
 	wfID := d.workflowID
@@ -194,7 +205,7 @@ func (d *ResourceDetail) fetchCmd() tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		resp, err := client.GetResource(ctx, wfID, rscID)
-		return resourceLoadedMsg{id: id, response: resp, err: err}
+		return resourceLoadedMsg{id: id, seq: seq, response: resp, err: err}
 	}
 }
 
@@ -205,7 +216,10 @@ func (d *ResourceDetail) openSpec() tea.Cmd {
 	}
 	inst := d.instances[idx]
 	return uitypes.Push(NewJSONView(
-		fmt.Sprintf("instance %d spec — wf %s · resource %s", inst.InstanceAttempt, d.workflowID, d.resourceID),
+		fmt.Sprintf("instance %d spec — wf %s · resource %s",
+			inst.InstanceAttempt,
+			format.Sanitize(d.workflowID),
+			format.Sanitize(d.resourceID)),
 		inst.InstanceSpec,
 		awsURLForResource(d.resource, inst),
 	))
@@ -218,7 +232,7 @@ func (d *ResourceDetail) refreshTable() {
 		rows = append(rows, table.Row{
 			fmt.Sprintf("%d", inst.InstanceAttempt),
 			styles.StatusPill(inst.Status),
-			format.Trunc(format.FirstLine(inst.ErrorMessage), 40),
+			format.Trunc(format.Sanitize(format.FirstLine(inst.ErrorMessage)), 40),
 			format.RelTime(inst.CreatedAt.Time, now),
 			optRel(inst.ActivatedAt, now),
 			optRel(inst.TerminatedAt, now),

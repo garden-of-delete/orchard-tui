@@ -21,22 +21,24 @@ import (
 
 // Stats is the dashboard view: daily stacked bars + day×hour heatmap.
 type Stats struct {
-	id       string
-	client   *api.Client
-	pollGap  time.Duration
+	id      string
+	client  *api.Client
+	pollGap time.Duration
 
-	daily    []api.DailyCount
-	pattern  []api.PatternCount
+	daily   []api.DailyCount
+	pattern []api.PatternCount
 
-	bar     barchart.Model
-	spin    spinner.Model
-	loading bool
-	err     error
-	w, h    int
+	bar      barchart.Model
+	spin     spinner.Model
+	loading  bool
+	err      error
+	fetchSeq int // monotonic per-fetch seq; older loaded msgs are dropped
+	w, h     int
 }
 
 type statsLoadedMsg struct {
 	id      string
+	seq     int
 	daily   []api.DailyCount
 	pattern []api.PatternCount
 	err     error
@@ -82,8 +84,8 @@ func (s *Stats) Refresh() tea.Cmd { return s.fetchCmd() }
 func (s *Stats) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
 	case statsLoadedMsg:
-		if m.id != s.id {
-			return s, nil
+		if m.id != s.id || m.seq < s.fetchSeq {
+			return s, nil // stale
 		}
 		s.loading = false
 		if m.err != nil {
@@ -104,6 +106,9 @@ func (s *Stats) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		s.loading = true
 		return s, tea.Batch(s.spin.Tick, s.fetchCmd())
 	case spinner.TickMsg:
+		if !s.loading {
+			return s, nil
+		}
 		var cmd tea.Cmd
 		s.spin, cmd = s.spin.Update(m)
 		return s, cmd
@@ -144,6 +149,8 @@ func (s *Stats) tickCmd() tea.Cmd {
 }
 
 func (s *Stats) fetchCmd() tea.Cmd {
+	s.fetchSeq++
+	seq := s.fetchSeq
 	id := s.id
 	client := s.client
 	return func() tea.Msg {
@@ -151,13 +158,13 @@ func (s *Stats) fetchCmd() tea.Cmd {
 		defer cancel()
 		daily, derr := client.GetDaily(ctx, 30)
 		if derr != nil {
-			return statsLoadedMsg{id: id, err: derr}
+			return statsLoadedMsg{id: id, seq: seq, err: derr}
 		}
 		pattern, perr := client.GetPattern(ctx, 30)
 		if perr != nil {
-			return statsLoadedMsg{id: id, err: perr}
+			return statsLoadedMsg{id: id, seq: seq, err: perr}
 		}
-		return statsLoadedMsg{id: id, daily: daily, pattern: pattern}
+		return statsLoadedMsg{id: id, seq: seq, daily: daily, pattern: pattern}
 	}
 }
 
