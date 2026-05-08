@@ -7,15 +7,18 @@ import (
 	"os"
 
 	"github.com/garden-of-delete/orchard-tui/internal/api"
+	"github.com/garden-of-delete/orchard-tui/internal/format"
 )
 
 // awsRegion picks a sensible default region from the env so AWS console
 // URLs aren't blank when the user hasn't set NEXT_PUBLIC_AWS_REGION
-// (mirroring orchard-ui's convention) or AWS_REGION.
+// (mirroring orchard-ui's convention) or AWS_REGION. The value is
+// sanitized so a maliciously-set env var can't inject ANSI escape
+// sequences via the rendered URL.
 func awsRegion() string {
 	for _, k := range []string{"NEXT_PUBLIC_AWS_REGION", "AWS_REGION", "AWS_DEFAULT_REGION"} {
 		if v := os.Getenv(k); v != "" {
-			return v
+			return format.Sanitize(v)
 		}
 	}
 	return "us-east-1"

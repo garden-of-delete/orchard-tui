@@ -42,11 +42,16 @@ type WorkflowDetail struct {
 	activities []api.Activity
 	resources  []api.Resource
 
-	tbl      table.Model
-	spin     spinner.Model
-	loading  bool
-	err      error
-	fetchSeq int // monotonic per-fetch seq; loaded msgs older than this are dropped
+	tbl     table.Model
+	spin    spinner.Model
+	loading bool
+	err     error
+	// Separate per-tab seq counters so a fresh fetch on one tab doesn't
+	// invalidate an in-flight fetch on the other when the user toggles
+	// rapidly. Single shared counter would drop the older tab's response
+	// even when the user has tabbed back to it.
+	fetchSeqAct int
+	fetchSeqRes int
 
 	w, h int
 }
@@ -127,7 +132,7 @@ func (d *WorkflowDetail) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
 
 	case workflowActivitiesLoadedMsg:
-		if m.id != d.id || m.seq < d.fetchSeq {
+		if m.id != d.id || m.seq < d.fetchSeqAct {
 			return d, nil // stale
 		}
 		d.loading = false
@@ -144,7 +149,7 @@ func (d *WorkflowDetail) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, nil
 
 	case workflowResourcesLoadedMsg:
-		if m.id != d.id || m.seq < d.fetchSeq {
+		if m.id != d.id || m.seq < d.fetchSeqRes {
 			return d, nil // stale
 		}
 		d.loading = false
@@ -189,7 +194,17 @@ func (d *WorkflowDetail) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				d.tbl.SetColumns(activitiesColumns())
 			}
 			d.refreshTable()
-			return d, d.fetchCurrent()
+			// If we have no cached data for the new tab yet, show the
+			// spinner while the fetch is in flight rather than an empty
+			// table with no feedback.
+			fetch := d.fetchCurrent()
+			noCache := (d.tab == TabActivities && len(d.activities) == 0) ||
+				(d.tab == TabResources && len(d.resources) == 0)
+			if noCache {
+				d.loading = true
+				return d, tea.Batch(d.spin.Tick, fetch)
+			}
+			return d, fetch
 		case "enter":
 			return d, d.openSelected()
 		}
@@ -211,7 +226,7 @@ func (d *WorkflowDetail) View() string {
 	var body string
 	switch {
 	case d.err != nil:
-		body = lipgloss.NewStyle().Foreground(styles.Error).Render("error: " + d.err.Error())
+		body = lipgloss.NewStyle().Foreground(styles.Error).Render("error: " + format.Sanitize(d.err.Error()))
 	case d.loading && d.workflow == nil:
 		body = d.spin.View() + " loading…"
 	default:
@@ -279,8 +294,8 @@ func (d *WorkflowDetail) fetchCurrent() tea.Cmd {
 }
 
 func (d *WorkflowDetail) fetchActivities() tea.Cmd {
-	d.fetchSeq++
-	seq := d.fetchSeq
+	d.fetchSeqAct++
+	seq := d.fetchSeqAct
 	id := d.id
 	client := d.client
 	wfID := d.workflowID
@@ -293,8 +308,8 @@ func (d *WorkflowDetail) fetchActivities() tea.Cmd {
 }
 
 func (d *WorkflowDetail) fetchResources() tea.Cmd {
-	d.fetchSeq++
-	seq := d.fetchSeq
+	d.fetchSeqRes++
+	seq := d.fetchSeqRes
 	id := d.id
 	client := d.client
 	wfID := d.workflowID

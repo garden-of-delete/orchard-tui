@@ -15,6 +15,10 @@ type OrchardTime struct{ time.Time }
 var orchardTimeLayouts = []string{
 	"2006-01-02T15:04:05.999999999",
 	"2006-01-02T15:04:05",
+	// RFC 3339 fallbacks in case orchard ever migrates LocalDateTime →
+	// ZonedDateTime, or a proxy adds a Z / ±hh:mm suffix.
+	time.RFC3339Nano,
+	time.RFC3339,
 }
 
 func (t *OrchardTime) UnmarshalJSON(b []byte) error {

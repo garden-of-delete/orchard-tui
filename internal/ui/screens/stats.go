@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/garden-of-delete/orchard-tui/internal/api"
+	"github.com/garden-of-delete/orchard-tui/internal/format"
 	"github.com/garden-of-delete/orchard-tui/internal/ui/poll"
 	"github.com/garden-of-delete/orchard-tui/internal/ui/styles"
 	"github.com/garden-of-delete/orchard-tui/internal/ui/uitypes"
@@ -122,7 +123,7 @@ func (s *Stats) View() string {
 	}
 	switch {
 	case s.err != nil:
-		return lipgloss.NewStyle().Foreground(styles.Error).Render("error: " + s.err.Error())
+		return lipgloss.NewStyle().Foreground(styles.Error).Render("error: " + format.Sanitize(s.err.Error()))
 	case s.loading && len(s.daily) == 0 && len(s.pattern) == 0:
 		return s.spin.View() + " loading stats…"
 	}
@@ -174,6 +175,16 @@ func (s *Stats) rebuildBar() {
 	if len(s.daily) == 0 {
 		return
 	}
+
+	// Recreate the bar model so PushAll doesn't accumulate bars on top
+	// of stale data from prior fetches. ntcharts barchart's PushAll
+	// appends; without this reset the chart would show duplicate dates
+	// after each poll tick.
+	chartW, chartH := s.chartDims()
+	s.bar = barchart.New(chartW, chartH,
+		barchart.WithBarGap(0),
+		barchart.WithBarWidth(2),
+	)
 
 	// Group by date, summing per status into stacked BarValues.
 	byDate := map[string]map[api.Status]int{}
@@ -278,7 +289,14 @@ func (s *Stats) layout() {
 	if s.w <= 0 || s.h <= 0 {
 		return
 	}
-	// Reserve roughly half the height for each panel.
+	// rebuildBar recreates the bar model with the current dimensions, so
+	// resize is just a matter of running it. (When called from layout
+	// before any data has loaded, rebuildBar early-returns.)
+	s.rebuildBar()
+}
+
+// chartDims returns the bar chart's width/height clamped to sane minima.
+func (s *Stats) chartDims() (int, int) {
 	chartH := s.h / 2
 	if chartH < 8 {
 		chartH = 8
@@ -287,9 +305,5 @@ func (s *Stats) layout() {
 	if chartW < 30 {
 		chartW = 30
 	}
-	s.bar = barchart.New(chartW, chartH,
-		barchart.WithBarGap(0),
-		barchart.WithBarWidth(2),
-	)
-	s.rebuildBar()
+	return chartW, chartH
 }

@@ -26,7 +26,6 @@ var (
 	Bold     = lipgloss.NewStyle().Bold(true)
 	Faint    = lipgloss.NewStyle().Foreground(Subtle)
 	Hint     = lipgloss.NewStyle().Foreground(Subtle)
-	HeaderBG = lipgloss.NewStyle().Bold(true).Foreground(Highlight)
 	Card     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(Border).Padding(0, 1)
 	ToastErr = lipgloss.NewStyle().Foreground(Error).Bold(true)
 	ToastOK  = lipgloss.NewStyle().Foreground(Success)

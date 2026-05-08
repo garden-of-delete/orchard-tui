@@ -42,9 +42,13 @@ func Load() (Config, error) {
 	if v := os.Getenv(EnvHost); v != "" {
 		c.Host = v
 	}
+	c.Host = strings.TrimSpace(c.Host)
 	c.Host = strings.TrimRight(c.Host, "/")
 	if !strings.HasPrefix(c.Host, "http://") && !strings.HasPrefix(c.Host, "https://") {
 		return c, fmt.Errorf("%s must include scheme (http:// or https://): got %q", EnvHost, c.Host)
+	}
+	if strings.ContainsAny(c.Host, "\r\n\x00") {
+		return c, fmt.Errorf("%s must not contain control characters", EnvHost)
 	}
 
 	c.APIKey = os.Getenv(EnvAPIKey)

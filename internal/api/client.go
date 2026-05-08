@@ -40,11 +40,21 @@ type Client struct {
 // New returns a Client with sensible defaults. baseURL is expected to
 // be already free of any trailing slash (config.Load trims it); we
 // don't re-trim here to keep this function trivially predictable.
+//
+// Redirect following is disabled: this is a single-host client where
+// orchard owns the URL space. Allowing redirects would let a
+// compromised orchard (or a MitM that can inject a 30x response)
+// forward the x-api-key header to a third-party host.
 func New(baseURL, apiKey string) *Client {
 	return &Client{
 		BaseURL: baseURL,
 		APIKey:  apiKey,
-		HTTP:    &http.Client{Timeout: defaultTimeout},
+		HTTP: &http.Client{
+			Timeout: defaultTimeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}
 }
 

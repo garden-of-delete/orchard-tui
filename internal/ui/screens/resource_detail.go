@@ -154,7 +154,7 @@ func (d *ResourceDetail) View() string {
 	var body string
 	switch {
 	case d.err != nil:
-		body = lipgloss.NewStyle().Foreground(styles.Error).Render("error: " + d.err.Error())
+		body = lipgloss.NewStyle().Foreground(styles.Error).Render("error: " + format.Sanitize(d.err.Error()))
 	case d.loading && d.resource == nil:
 		body = d.spin.View() + " loading…"
 	default:

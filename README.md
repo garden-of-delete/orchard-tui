@@ -149,14 +149,6 @@ ORCHARD_HOST=http://localhost:9001 go run ./cmd/integration
 To stand up orchard locally for that probe, follow its own
 [setup instructions](https://github.com/garden-of-delete/orchard).
 
-There is also a tagged TUI integration test that drives the full app
-against the same live orchard and dumps captured frames to stdout:
-
-```sh
-ORCHARD_HOST=http://localhost:9001 \
-  go test -tags integration -v ./internal/ui -run TestRealOrchardCapture
-```
-
 ## License
 
 See [LICENSE.txt](LICENSE.txt).
