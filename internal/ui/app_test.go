@@ -188,9 +188,7 @@ func TestAppFilterCommand(t *testing.T) {
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 
 	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
-		s := string(b)
-		// nightly remains; demo-pipeline is filtered out.
-		return strings.Contains(s, "nightly-load") && !strings.Contains(s, "demo-pipeline")
+		return strings.Contains(string(b), "1 workflow · /nightly")
 	}, teatest.WithDuration(3*time.Second))
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})

@@ -55,7 +55,7 @@ func NewActivityDetail(client *api.Client, workflowID, activityID string, fast t
 		activityID: activityID,
 		pollFast:   fast,
 	}
-	d.tbl = table.New(table.WithColumns(attemptsColumns()), table.WithFocused(true), table.WithHeight(10))
+	d.tbl = table.New(table.WithColumns(attemptsColumns(0)), table.WithFocused(true), table.WithHeight(10))
 	d.tbl.SetStyles(workflowsTableStyles())
 
 	sp := spinner.New()
@@ -228,12 +228,14 @@ func (d *ActivityDetail) openSpec() tea.Cmd {
 
 func (d *ActivityDetail) refreshTable() {
 	now := time.Now().UTC()
+	cols := d.tbl.Columns()
+	errW := cols[2].Width
 	rows := make([]table.Row, 0, len(d.attempts))
 	for _, a := range d.attempts {
 		rows = append(rows, table.Row{
 			fmt.Sprintf("%d", a.Attempt),
 			styles.StatusPill(a.Status),
-			format.Trunc(format.Sanitize(format.FirstLine(a.ErrorMessage)), 40),
+			format.Trunc(format.Sanitize(format.FirstLine(a.ErrorMessage)), errW),
 			format.Trunc(format.Sanitize(a.ResourceID), 6),
 			fmt.Sprintf("%d", a.ResourceInstanceAttempt),
 			format.RelTime(a.CreatedAt.Time, now),
@@ -242,11 +244,7 @@ func (d *ActivityDetail) refreshTable() {
 		})
 	}
 	d.tbl.SetRows(rows)
-	if d.tbl.Cursor() >= len(rows) {
-		if len(rows) > 0 {
-			d.tbl.SetCursor(len(rows) - 1)
-		}
-	}
+	clampCursor(&d.tbl, len(rows))
 }
 
 func (d *ActivityDetail) layout() {
@@ -260,17 +258,31 @@ func (d *ActivityDetail) layout() {
 	}
 	d.tbl.SetHeight(tableH)
 	d.tbl.SetWidth(d.w)
+	d.tbl.SetColumns(attemptsColumns(d.w))
+	d.refreshTable()
 }
 
-func attemptsColumns() []table.Column {
+func attemptsColumns(width int) []table.Column {
+	const (
+		numW, statusW, resW, instW, timeW = 4, 14, 6, 6, 10
+		minErr                            = 30
+	)
+	if width <= 0 {
+		width = 80
+	}
+	fixed := numW + statusW + resW + instW + 3*timeW
+	errW := width - fixed - 2
+	if errW < minErr {
+		errW = minErr
+	}
 	return []table.Column{
-		{Title: "#", Width: 4},
-		{Title: "STATUS", Width: 12},
-		{Title: "ERROR", Width: 40},
-		{Title: "RES", Width: 6},
-		{Title: "INST#", Width: 6},
-		{Title: "CREATED", Width: 12},
-		{Title: "ACTIVATED", Width: 12},
-		{Title: "TERMINATED", Width: 12},
+		{Title: "#", Width: numW},
+		{Title: "STATUS", Width: statusW},
+		{Title: "ERROR", Width: errW},
+		{Title: "RES", Width: resW},
+		{Title: "INST#", Width: instW},
+		{Title: "CREATED", Width: timeW},
+		{Title: "ACTIVATED", Width: timeW},
+		{Title: "TERMINATED", Width: timeW},
 	}
 }

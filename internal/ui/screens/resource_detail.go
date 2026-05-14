@@ -55,7 +55,7 @@ func NewResourceDetail(client *api.Client, workflowID, resourceID string, fast t
 		resourceID: resourceID,
 		pollFast:   fast,
 	}
-	d.tbl = table.New(table.WithColumns(instancesColumns()), table.WithFocused(true), table.WithHeight(10))
+	d.tbl = table.New(table.WithColumns(instancesColumns(0)), table.WithFocused(true), table.WithHeight(10))
 	d.tbl.SetStyles(workflowsTableStyles())
 
 	sp := spinner.New()
@@ -227,23 +227,21 @@ func (d *ResourceDetail) openSpec() tea.Cmd {
 
 func (d *ResourceDetail) refreshTable() {
 	now := time.Now().UTC()
+	cols := d.tbl.Columns()
+	errW := cols[2].Width
 	rows := make([]table.Row, 0, len(d.instances))
 	for _, inst := range d.instances {
 		rows = append(rows, table.Row{
 			fmt.Sprintf("%d", inst.InstanceAttempt),
 			styles.StatusPill(inst.Status),
-			format.Trunc(format.Sanitize(format.FirstLine(inst.ErrorMessage)), 40),
+			format.Trunc(format.Sanitize(format.FirstLine(inst.ErrorMessage)), errW),
 			format.RelTime(inst.CreatedAt.Time, now),
 			optRel(inst.ActivatedAt, now),
 			optRel(inst.TerminatedAt, now),
 		})
 	}
 	d.tbl.SetRows(rows)
-	if d.tbl.Cursor() >= len(rows) {
-		if len(rows) > 0 {
-			d.tbl.SetCursor(len(rows) - 1)
-		}
-	}
+	clampCursor(&d.tbl, len(rows))
 }
 
 func (d *ResourceDetail) layout() {
@@ -257,15 +255,29 @@ func (d *ResourceDetail) layout() {
 	}
 	d.tbl.SetHeight(tableH)
 	d.tbl.SetWidth(d.w)
+	d.tbl.SetColumns(instancesColumns(d.w))
+	d.refreshTable()
 }
 
-func instancesColumns() []table.Column {
+func instancesColumns(width int) []table.Column {
+	const (
+		numW, statusW, timeW = 4, 14, 10
+		minErr               = 30
+	)
+	if width <= 0 {
+		width = 80
+	}
+	fixed := numW + statusW + 3*timeW
+	errW := width - fixed - 2
+	if errW < minErr {
+		errW = minErr
+	}
 	return []table.Column{
-		{Title: "#", Width: 4},
-		{Title: "STATUS", Width: 12},
-		{Title: "ERROR", Width: 40},
-		{Title: "CREATED", Width: 12},
-		{Title: "ACTIVATED", Width: 12},
-		{Title: "TERMINATED", Width: 12},
+		{Title: "#", Width: numW},
+		{Title: "STATUS", Width: statusW},
+		{Title: "ERROR", Width: errW},
+		{Title: "CREATED", Width: timeW},
+		{Title: "ACTIVATED", Width: timeW},
+		{Title: "TERMINATED", Width: timeW},
 	}
 }

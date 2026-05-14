@@ -5,6 +5,8 @@ package ui
 
 import (
 	"context"
+	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
@@ -53,6 +55,18 @@ type App struct {
 	countsSeq      int // monotonic per-fetch seq for /v1/stats/counts
 
 	globals []key.Binding
+
+	perfEnabled bool
+	perfPrev    perfSnap
+	perfCur     perfSnap
+}
+
+type perfSnap struct {
+	at         time.Time
+	requests   uint64
+	bytes      uint64
+	heapMB     uint64
+	goroutines int
 }
 
 // New creates the root model.
@@ -75,6 +89,9 @@ func New(cfg config.Config) *App {
 	a.stack.Push(first)
 	return a
 }
+
+// EnablePerf turns on the perf strip in the footer (--perf flag).
+func (a *App) EnablePerf() { a.perfEnabled = true }
 
 // Init starts the active screen and the background counts ticker.
 func (a *App) Init() tea.Cmd {
@@ -141,6 +158,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case uitypes.CountsTickMsg:
+		if a.perfEnabled {
+			a.refreshPerf()
+		}
 		if a.focused {
 			return a, tea.Batch(a.fetchCountsCmd(), a.countsTickCmd())
 		}
@@ -253,7 +273,39 @@ func (a *App) renderFooter() string {
 		ToastErr:  a.toastErr,
 		ToastTime: a.toastAt,
 		ToastTTL:  a.toastTTL,
+		Perf:      a.perfLine(),
 	}.View()
+}
+
+func (a *App) refreshPerf() {
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	s := a.client.Stats()
+	a.perfPrev = a.perfCur
+	a.perfCur = perfSnap{
+		at:         time.Now(),
+		requests:   s.Requests,
+		bytes:      s.ResponseBytes,
+		heapMB:     ms.HeapAlloc / (1024 * 1024),
+		goroutines: runtime.NumGoroutine(),
+	}
+}
+
+func (a *App) perfLine() string {
+	if !a.perfEnabled {
+		return ""
+	}
+	if a.perfCur.at.IsZero() {
+		return "perf: warming up"
+	}
+	elapsed := a.perfCur.at.Sub(a.perfPrev.at).Seconds()
+	if elapsed < 0.1 {
+		return fmt.Sprintf("perf: heap=%dMB gor=%d", a.perfCur.heapMB, a.perfCur.goroutines)
+	}
+	reqRate := float64(a.perfCur.requests-a.perfPrev.requests) / elapsed
+	byteRate := float64(a.perfCur.bytes-a.perfPrev.bytes) / elapsed / 1024
+	return fmt.Sprintf("perf: %.1freq/s %.1fKB/s heap=%dMB gor=%d",
+		reqRate, byteRate, a.perfCur.heapMB, a.perfCur.goroutines)
 }
 
 func (a *App) activeKeyMap() []key.Binding {

@@ -38,8 +38,9 @@ type Workflows struct {
 	rows      []api.Workflow // last-fetched (sorted)
 	visible   []api.Workflow // after filter
 	filter    string
-	preFilter string // snapshot taken on FilterEnterMsg; restored on FilterCancelMsg
-	fetchSeq  int    // monotonic per-fetch seq; loaded msgs older than this are dropped
+	preFilter string   // snapshot taken on FilterEnterMsg; restored on FilterCancelMsg
+	fetchSeq  int      // monotonic per-fetch seq; loaded msgs older than this are dropped
+	sortMode  sortMode // default: byStatus (red statuses at top)
 
 	tbl     table.Model
 	spin    spinner.Model
@@ -47,6 +48,13 @@ type Workflows struct {
 	err     error
 	w, h    int
 }
+
+type sortMode int
+
+const (
+	sortByStatus sortMode = iota
+	sortByCreated
+)
 
 // workflowsPerPage is how many rows the screen requests in a single
 // fetch. Orchard's server-side default is 50; we ask for substantially
@@ -80,15 +88,7 @@ func NewWorkflows(client *api.Client, statuses []api.Status, fastPoll, mediumPol
 		pollGap:    pickPoll(statuses, fastPoll, mediumPoll, slowPoll),
 	}
 
-	cols := []table.Column{
-		{Title: "ID", Width: 32},
-		{Title: "NAME", Width: 24},
-		{Title: "STATUS", Width: 12},
-		{Title: "CREATED", Width: 12},
-		{Title: "ACTIVATED", Width: 12},
-		{Title: "TERMINATED", Width: 12},
-	}
-	tbl := table.New(table.WithColumns(cols), table.WithFocused(true), table.WithHeight(10))
+	tbl := table.New(table.WithColumns(w.computeColumns(0)), table.WithFocused(true), table.WithHeight(10))
 	tbl.SetStyles(workflowsTableStyles())
 	w.tbl = tbl
 
@@ -125,6 +125,7 @@ func (w *Workflows) KeyMap() []key.Binding {
 	return []key.Binding{
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "view")),
 		key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
+		key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "sort")),
 		key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 		key.NewBinding(key.WithKeys(":"), key.WithHelp(":", "cmd")),
 	}
@@ -154,9 +155,7 @@ func (w *Workflows) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			w.err = nil
 			w.rows = m.rows
-			sort.SliceStable(w.rows, func(i, j int) bool {
-				return w.rows[i].CreatedAt.Time.After(w.rows[j].CreatedAt.Time)
-			})
+			w.sortRows()
 			w.applyFilter()
 		}
 		return w, nil
@@ -213,6 +212,15 @@ func (w *Workflows) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return w, uitypes.Push(NewWorkflowDetail(w.client, wf.ID, w.pollFast))
 			}
 			return w, nil
+		case "S":
+			if w.sortMode == sortByStatus {
+				w.sortMode = sortByCreated
+			} else {
+				w.sortMode = sortByStatus
+			}
+			w.sortRows()
+			w.applyFilter()
+			return w, nil
 		}
 	}
 
@@ -236,7 +244,8 @@ func (w *Workflows) View() string {
 	case len(w.visible) == 0:
 		head = styles.Faint.Render("No workflows yet — start one with the orchard API.")
 	default:
-		summary := fmt.Sprintf("%d workflow%s%s", len(w.visible), plural(len(w.visible)), filterNote(w.filter))
+		summary := fmt.Sprintf("%d workflow%s%s · sort:%s (S)",
+			len(w.visible), plural(len(w.visible)), filterNote(w.filter), sortLabel(w.sortMode))
 		if len(w.rows) >= workflowsPerPage {
 			summary += fmt.Sprintf("  (showing first %d — narrow with /, a status filter, or :wf <id>)", workflowsPerPage)
 		}
@@ -306,11 +315,13 @@ func (w *Workflows) applyFilter() {
 
 func (w *Workflows) refreshTable() {
 	now := time.Now().UTC()
+	cols := w.tbl.Columns()
+	idW, nameW := cols[0].Width, cols[1].Width
 	rows := make([]table.Row, 0, len(w.visible))
 	for _, wf := range w.visible {
 		rows = append(rows, table.Row{
-			format.Trunc(format.Sanitize(wf.ID), 32),
-			format.Trunc(format.Sanitize(wf.Name), 24),
+			format.Trunc(format.Sanitize(wf.ID), idW),
+			format.Trunc(format.Sanitize(wf.Name), nameW),
 			styles.StatusPill(wf.Status),
 			format.RelTime(wf.CreatedAt.Time, now),
 			activatedRel(wf, now),
@@ -318,10 +329,61 @@ func (w *Workflows) refreshTable() {
 		})
 	}
 	w.tbl.SetRows(rows)
-	if w.tbl.Cursor() >= len(rows) {
-		if len(rows) > 0 {
-			w.tbl.SetCursor(len(rows) - 1)
-		}
+	clampCursor(&w.tbl, len(rows))
+}
+
+func (w *Workflows) sortRows() {
+	switch w.sortMode {
+	case sortByStatus:
+		sort.SliceStable(w.rows, func(i, j int) bool {
+			pi, pj := statusPriority(w.rows[i].Status), statusPriority(w.rows[j].Status)
+			if pi != pj {
+				return pi < pj
+			}
+			return w.rows[i].CreatedAt.Time.After(w.rows[j].CreatedAt.Time)
+		})
+	case sortByCreated:
+		sort.SliceStable(w.rows, func(i, j int) bool {
+			return w.rows[i].CreatedAt.Time.After(w.rows[j].CreatedAt.Time)
+		})
+	}
+}
+
+func statusPriority(s api.Status) int {
+	switch s {
+	case api.StatusFailed, api.StatusCascadeFailed, api.StatusTimeout:
+		return 0
+	case api.StatusCanceled, api.StatusCanceling:
+		return 1
+	case api.StatusRunning, api.StatusActivating, api.StatusDeactivating, api.StatusShuttingDown:
+		return 2
+	case api.StatusPending:
+		return 3
+	case api.StatusFinished:
+		return 4
+	case api.StatusDeleted:
+		return 5
+	}
+	return 6
+}
+
+func sortLabel(m sortMode) string {
+	if m == sortByStatus {
+		return "status"
+	}
+	return "created"
+}
+
+// clampCursor fixes the -1 cursor that bubbles/table leaves after SetRows(nil).
+func clampCursor(tbl *table.Model, n int) {
+	if n == 0 {
+		return
+	}
+	c := tbl.Cursor()
+	if c < 0 {
+		tbl.SetCursor(0)
+	} else if c >= n {
+		tbl.SetCursor(n - 1)
 	}
 }
 
@@ -350,6 +412,41 @@ func (w *Workflows) layout() {
 	}
 	w.tbl.SetHeight(tableHeight)
 	w.tbl.SetWidth(w.w)
+	w.tbl.SetColumns(w.computeColumns(w.w))
+	w.refreshTable() // re-truncate cells against new ID/NAME widths
+}
+
+func (w *Workflows) computeColumns(width int) []table.Column {
+	const (
+		statusW = 14
+		timeW   = 10
+		minID   = 20
+		minName = 12
+	)
+	if width <= 0 {
+		width = 80
+	}
+	fixed := statusW + 3*timeW
+	flex := width - fixed - 2
+	if flex < minID+minName {
+		flex = minID + minName
+	}
+	idW := flex * 55 / 100
+	if idW < minID {
+		idW = minID
+	}
+	nameW := flex - idW
+	if nameW < minName {
+		nameW = minName
+	}
+	return []table.Column{
+		{Title: "ID", Width: idW},
+		{Title: "NAME", Width: nameW},
+		{Title: "STATUS", Width: statusW},
+		{Title: "CREATED", Width: timeW},
+		{Title: "ACTIVATED", Width: timeW},
+		{Title: "TERMINATED", Width: timeW},
+	}
 }
 
 func statusSuffix(s []api.Status) string {

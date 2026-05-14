@@ -86,6 +86,8 @@ All configuration is via environment variables.
 
 The `--host` flag overrides `ORCHARD_HOST`. `--print-config` prints the
 resolved configuration and exits — handy when debugging in a new pod.
+`--perf` shows a small footer strip with `req/s`, `KB/s`, heap MB, and
+goroutine count, refreshed each `ORCHARD_POLL_MEDIUM` tick (10s default).
 
 ## Keybindings
 

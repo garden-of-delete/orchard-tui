@@ -81,7 +81,7 @@ func NewWorkflowDetail(client *api.Client, workflowID string, fast time.Duration
 		pollFast:   fast,
 		tab:        TabActivities,
 	}
-	d.tbl = table.New(table.WithColumns(activitiesColumns()), table.WithFocused(true), table.WithHeight(10))
+	d.tbl = table.New(table.WithColumns(activitiesColumns(0)), table.WithFocused(true), table.WithHeight(10))
 	d.tbl.SetStyles(workflowsTableStyles())
 
 	sp := spinner.New()
@@ -188,10 +188,10 @@ func (d *WorkflowDetail) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "tab":
 			if d.tab == TabActivities {
 				d.tab = TabResources
-				d.tbl.SetColumns(resourcesColumns())
+				d.tbl.SetColumns(resourcesColumns(d.w))
 			} else {
 				d.tab = TabActivities
-				d.tbl.SetColumns(activitiesColumns())
+				d.tbl.SetColumns(activitiesColumns(d.w))
 			}
 			d.refreshTable()
 			// If we have no cached data for the new tab yet, show the
@@ -339,13 +339,15 @@ func (d *WorkflowDetail) openSelected() tea.Cmd {
 
 func (d *WorkflowDetail) refreshTable() {
 	now := time.Now().UTC()
+	cols := d.tbl.Columns()
 	if d.tab == TabActivities {
+		nameW, typeW := cols[1].Width, cols[2].Width
 		rows := make([]table.Row, 0, len(d.activities))
 		for _, a := range d.activities {
 			rows = append(rows, table.Row{
 				format.Sanitize(a.ActivityID),
-				format.Trunc(format.Sanitize(a.Name), 24),
-				format.Sanitize(shortType(a.ActivityType)),
+				format.Trunc(format.Sanitize(a.Name), nameW),
+				format.Trunc(format.Sanitize(shortType(a.ActivityType)), typeW),
 				styles.StatusPill(a.Status),
 				format.Trunc(format.Sanitize(a.ResourceID), 6),
 				format.RelTime(a.CreatedAt.Time, now),
@@ -355,12 +357,13 @@ func (d *WorkflowDetail) refreshTable() {
 		}
 		d.tbl.SetRows(rows)
 	} else {
+		nameW, typeW := cols[1].Width, cols[2].Width
 		rows := make([]table.Row, 0, len(d.resources))
 		for _, r := range d.resources {
 			rows = append(rows, table.Row{
 				format.Sanitize(r.ResourceID),
-				format.Trunc(format.Sanitize(r.Name), 24),
-				format.Sanitize(shortType(r.ResourceType)),
+				format.Trunc(format.Sanitize(r.Name), nameW),
+				format.Trunc(format.Sanitize(shortType(r.ResourceType)), typeW),
 				styles.StatusPill(r.Status),
 				format.RelTime(r.CreatedAt.Time, now),
 				optRel(r.ActivatedAt, now),
@@ -370,11 +373,7 @@ func (d *WorkflowDetail) refreshTable() {
 		}
 		d.tbl.SetRows(rows)
 	}
-	if d.tbl.Cursor() >= len(d.tbl.Rows()) {
-		if len(d.tbl.Rows()) > 0 {
-			d.tbl.SetCursor(len(d.tbl.Rows()) - 1)
-		}
-	}
+	clampCursor(&d.tbl, len(d.tbl.Rows()))
 }
 
 func (d *WorkflowDetail) layout() {
@@ -389,31 +388,77 @@ func (d *WorkflowDetail) layout() {
 	}
 	d.tbl.SetHeight(tableH)
 	d.tbl.SetWidth(d.w)
+	if d.tab == TabActivities {
+		d.tbl.SetColumns(activitiesColumns(d.w))
+	} else {
+		d.tbl.SetColumns(resourcesColumns(d.w))
+	}
+	d.refreshTable()
 }
 
-func activitiesColumns() []table.Column {
+func activitiesColumns(width int) []table.Column {
+	const (
+		idW, statusW, resW, timeW = 6, 14, 6, 10
+		minName, minType          = 14, 12
+	)
+	if width <= 0 {
+		width = 80
+	}
+	fixed := idW + statusW + resW + 3*timeW
+	flex := width - fixed - 2
+	if flex < minName+minType {
+		flex = minName + minType
+	}
+	nameW := flex * 50 / 100
+	if nameW < minName {
+		nameW = minName
+	}
+	typeW := flex - nameW
+	if typeW < minType {
+		typeW = minType
+	}
 	return []table.Column{
-		{Title: "ID", Width: 6},
-		{Title: "NAME", Width: 24},
-		{Title: "TYPE", Width: 22},
-		{Title: "STATUS", Width: 12},
-		{Title: "RES", Width: 6},
-		{Title: "CREATED", Width: 12},
-		{Title: "ACTIVATED", Width: 12},
-		{Title: "TERMINATED", Width: 12},
+		{Title: "ID", Width: idW},
+		{Title: "NAME", Width: nameW},
+		{Title: "TYPE", Width: typeW},
+		{Title: "STATUS", Width: statusW},
+		{Title: "RES", Width: resW},
+		{Title: "CREATED", Width: timeW},
+		{Title: "ACTIVATED", Width: timeW},
+		{Title: "TERMINATED", Width: timeW},
 	}
 }
 
-func resourcesColumns() []table.Column {
+func resourcesColumns(width int) []table.Column {
+	const (
+		idW, statusW, timeW, ttlW = 6, 14, 10, 6
+		minName, minType          = 14, 14
+	)
+	if width <= 0 {
+		width = 80
+	}
+	fixed := idW + statusW + 3*timeW + ttlW
+	flex := width - fixed - 2
+	if flex < minName+minType {
+		flex = minName + minType
+	}
+	nameW := flex * 50 / 100
+	if nameW < minName {
+		nameW = minName
+	}
+	typeW := flex - nameW
+	if typeW < minType {
+		typeW = minType
+	}
 	return []table.Column{
-		{Title: "ID", Width: 6},
-		{Title: "NAME", Width: 24},
-		{Title: "TYPE", Width: 28},
-		{Title: "STATUS", Width: 12},
-		{Title: "CREATED", Width: 12},
-		{Title: "ACTIVATED", Width: 12},
-		{Title: "TERMINATED", Width: 12},
-		{Title: "TTL", Width: 6},
+		{Title: "ID", Width: idW},
+		{Title: "NAME", Width: nameW},
+		{Title: "TYPE", Width: typeW},
+		{Title: "STATUS", Width: statusW},
+		{Title: "CREATED", Width: timeW},
+		{Title: "ACTIVATED", Width: timeW},
+		{Title: "TERMINATED", Width: timeW},
+		{Title: "TTL", Width: ttlW},
 	}
 }
 

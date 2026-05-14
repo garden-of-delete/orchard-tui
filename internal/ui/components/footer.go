@@ -11,7 +11,7 @@ import (
 )
 
 // Footer renders the bottom chrome — keybinding hints with optional
-// transient toast.
+// transient toast or persistent perf strip.
 type Footer struct {
 	Bindings  []key.Binding
 	Width     int
@@ -20,6 +20,7 @@ type Footer struct {
 	ToastTime time.Time
 	ToastTTL  time.Duration
 	ModeHint  string // e.g., ":command" or "/filter"
+	Perf      string // right-aligned status when --perf is on; toast wins
 }
 
 func (f Footer) View() string {
@@ -37,18 +38,22 @@ func (f Footer) View() string {
 
 	hints := f.renderBindings()
 
+	right := ""
 	if f.Toast != "" && time.Since(f.ToastTime) < f.ToastTTL {
 		toastStyle := styles.ToastOK
 		if f.ToastErr {
 			toastStyle = styles.ToastErr
 		}
-		toast := toastStyle.Render(f.Toast)
-		// Right-align toast on top of the hints.
-		gap := f.Width - lipgloss.Width(hints) - lipgloss.Width(toast)
+		right = toastStyle.Render(f.Toast)
+	} else if f.Perf != "" {
+		right = styles.Faint.Render(f.Perf)
+	}
+	if right != "" {
+		gap := f.Width - lipgloss.Width(hints) - lipgloss.Width(right)
 		if gap < 1 {
 			gap = 1
 		}
-		hints = hints + strings.Repeat(" ", gap) + toast
+		hints = hints + strings.Repeat(" ", gap) + right
 	}
 
 	return lipgloss.NewStyle().
