@@ -11,8 +11,7 @@ against orchard. Use orchard's API (or its web console) to create, activate,
 cancel, or delete workflows.
 
 It ships as a single static binary and is designed to **run inside the orchard
-pod** against `http://localhost:9000`, so there's nothing to expose and no
-extra services to keep alive.
+pod** against `http://localhost:9000`.
 
 ```text
 ┌──────────────────────────────────────────────────────────┐
