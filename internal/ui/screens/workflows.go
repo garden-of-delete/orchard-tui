@@ -322,7 +322,7 @@ func (w *Workflows) refreshTable() {
 		rows = append(rows, table.Row{
 			format.Trunc(format.Sanitize(wf.ID), idW),
 			format.Trunc(format.Sanitize(wf.Name), nameW),
-			styles.StatusPill(wf.Status),
+			string(wf.Status),
 			format.RelTime(wf.CreatedAt.Time, now),
 			activatedRel(wf, now),
 			terminatedRel(wf, now),

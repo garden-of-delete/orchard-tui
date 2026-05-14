@@ -233,7 +233,7 @@ func (d *ResourceDetail) refreshTable() {
 	for _, inst := range d.instances {
 		rows = append(rows, table.Row{
 			fmt.Sprintf("%d", inst.InstanceAttempt),
-			styles.StatusPill(inst.Status),
+			string(inst.Status),
 			format.Trunc(format.Sanitize(format.FirstLine(inst.ErrorMessage)), errW),
 			format.RelTime(inst.CreatedAt.Time, now),
 			optRel(inst.ActivatedAt, now),
