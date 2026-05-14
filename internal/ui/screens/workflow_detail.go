@@ -3,6 +3,7 @@ package screens
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -36,7 +37,8 @@ type WorkflowDetail struct {
 	workflowID string
 	pollFast   time.Duration
 
-	tab WorkflowTab
+	tab      WorkflowTab
+	sortMode sortMode
 
 	workflow   *api.Workflow
 	activities []api.Activity
@@ -112,6 +114,7 @@ func (d *WorkflowDetail) KeyMap() []key.Binding {
 	return []key.Binding{
 		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "activities/resources")),
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "view")),
+		key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "sort")),
 		key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 	}
 }
@@ -186,6 +189,7 @@ func (d *WorkflowDetail) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch m.String() {
 		case "tab":
+			d.tbl.SetRows(nil) // avoid renderRow panic when column count drops
 			if d.tab == TabActivities {
 				d.tab = TabResources
 				d.tbl.SetColumns(resourcesColumns(d.w))
@@ -207,6 +211,14 @@ func (d *WorkflowDetail) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return d, fetch
 		case "enter":
 			return d, d.openSelected()
+		case "S":
+			if d.sortMode == sortByStatus {
+				d.sortMode = sortByCreated
+			} else {
+				d.sortMode = sortByStatus
+			}
+			d.refreshTable()
+			return d, nil
 		}
 	}
 
@@ -272,11 +284,12 @@ func (d *WorkflowDetail) tabsLine() string {
 	res := "Resources"
 	on := lipgloss.NewStyle().Bold(true).Foreground(styles.Primary)
 	off := styles.Faint
+	trailing := styles.Faint.Render("   tab to switch · sort:" + sortLabel(d.sortMode))
 
 	if d.tab == TabActivities {
-		return on.Render("["+act+"]") + "  " + off.Render(res) + styles.Faint.Render("   tab to switch")
+		return on.Render("["+act+"]") + "  " + off.Render(res) + trailing
 	}
-	return off.Render(act) + "  " + on.Render("["+res+"]") + styles.Faint.Render("   tab to switch")
+	return off.Render(act) + "  " + on.Render("["+res+"]") + trailing
 }
 
 func (d *WorkflowDetail) tickCmd() tea.Cmd {
@@ -341,7 +354,8 @@ func (d *WorkflowDetail) refreshTable() {
 	now := time.Now().UTC()
 	cols := d.tbl.Columns()
 	if d.tab == TabActivities {
-		nameW, typeW := cols[1].Width, cols[2].Width
+		sortActivities(d.activities, d.sortMode)
+		nameW, typeW, resW := cols[1].Width, cols[2].Width, cols[4].Width
 		rows := make([]table.Row, 0, len(d.activities))
 		for _, a := range d.activities {
 			rows = append(rows, table.Row{
@@ -349,7 +363,7 @@ func (d *WorkflowDetail) refreshTable() {
 				format.Trunc(format.Sanitize(a.Name), nameW),
 				format.Trunc(format.Sanitize(shortType(a.ActivityType)), typeW),
 				string(a.Status),
-				format.Trunc(format.Sanitize(a.ResourceID), 6),
+				format.Trunc(format.Sanitize(a.ResourceID), resW),
 				format.RelTime(a.CreatedAt.Time, now),
 				optRel(a.ActivatedAt, now),
 				optRel(a.TerminatedAt, now),
@@ -357,6 +371,7 @@ func (d *WorkflowDetail) refreshTable() {
 		}
 		d.tbl.SetRows(rows)
 	} else {
+		sortResources(d.resources, d.sortMode)
 		nameW, typeW := cols[1].Width, cols[2].Width
 		rows := make([]table.Row, 0, len(d.resources))
 		for _, r := range d.resources {
@@ -368,12 +383,35 @@ func (d *WorkflowDetail) refreshTable() {
 				format.RelTime(r.CreatedAt.Time, now),
 				optRel(r.ActivatedAt, now),
 				optRel(r.TerminatedAt, now),
-				fmt.Sprintf("%.0fh", r.TerminateAfter),
 			})
 		}
 		d.tbl.SetRows(rows)
 	}
 	clampCursor(&d.tbl, len(d.tbl.Rows()))
+}
+
+func sortActivities(xs []api.Activity, mode sortMode) {
+	sort.SliceStable(xs, func(i, j int) bool {
+		if mode == sortByStatus {
+			pi, pj := statusPriority(xs[i].Status), statusPriority(xs[j].Status)
+			if pi != pj {
+				return pi < pj
+			}
+		}
+		return xs[i].CreatedAt.Time.After(xs[j].CreatedAt.Time)
+	})
+}
+
+func sortResources(xs []api.Resource, mode sortMode) {
+	sort.SliceStable(xs, func(i, j int) bool {
+		if mode == sortByStatus {
+			pi, pj := statusPriority(xs[i].Status), statusPriority(xs[j].Status)
+			if pi != pj {
+				return pi < pj
+			}
+		}
+		return xs[i].CreatedAt.Time.After(xs[j].CreatedAt.Time)
+	})
 }
 
 func (d *WorkflowDetail) layout() {
@@ -398,25 +436,38 @@ func (d *WorkflowDetail) layout() {
 
 func activitiesColumns(width int) []table.Column {
 	const (
-		idW, statusW, resW, timeW = 6, 14, 6, 10
-		minName, minType          = 14, 12
-		nCols                     = 8
+		idW, statusW, timeW = 6, 14, 10
+		minRES, maxRES      = 6, 40
+		minName, minType    = 14, 12
+		maxType             = 25
+		nCols               = 8
 	)
 	if width <= 0 {
 		width = 80
 	}
-	fixed := idW + statusW + resW + 3*timeW
+	fixed := idW + statusW + 3*timeW
 	flex := width - fixed - 2 - cellPad*nCols
-	if flex < minName+minType {
-		flex = minName + minType
+	floor := minRES + minName + minType
+	if flex < floor {
+		flex = floor
 	}
-	nameW := flex * 50 / 100
-	if nameW < minName {
-		nameW = minName
+	resW := maxRES
+	if flex-minName-minType < resW {
+		resW = flex - minName - minType
 	}
-	typeW := flex - nameW
+	if resW < minRES {
+		resW = minRES
+	}
+	typeW := maxType
+	if flex-resW-minName < typeW {
+		typeW = flex - resW - minName
+	}
 	if typeW < minType {
 		typeW = minType
+	}
+	nameW := flex - resW - typeW
+	if nameW < minName {
+		nameW = minName
 	}
 	return []table.Column{
 		{Title: "ID", Width: idW},
@@ -432,14 +483,14 @@ func activitiesColumns(width int) []table.Column {
 
 func resourcesColumns(width int) []table.Column {
 	const (
-		idW, statusW, timeW, ttlW = 6, 14, 10, 6
-		minName, minType          = 14, 14
-		nCols                     = 8
+		idW, statusW, timeW = 6, 14, 10
+		minName, minType    = 14, 14
+		nCols               = 7
 	)
 	if width <= 0 {
 		width = 80
 	}
-	fixed := idW + statusW + 3*timeW + ttlW
+	fixed := idW + statusW + 3*timeW
 	flex := width - fixed - 2 - cellPad*nCols
 	if flex < minName+minType {
 		flex = minName + minType
@@ -460,7 +511,6 @@ func resourcesColumns(width int) []table.Column {
 		{Title: "CREATED", Width: timeW},
 		{Title: "ACTIVATED", Width: timeW},
 		{Title: "TERMINATED", Width: timeW},
-		{Title: "TTL", Width: ttlW},
 	}
 }
 
