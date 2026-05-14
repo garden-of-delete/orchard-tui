@@ -24,6 +24,7 @@ func main() {
 		hostFlag    = flag.String("host", "", "orchard base URL (overrides "+config.EnvHost+")")
 		showVersion = flag.Bool("version", false, "print version and exit")
 		printConfig = flag.Bool("print-config", false, "print resolved config and exit")
+		perfFlag    = flag.Bool("perf", false, "show a perf strip in the footer (heap, req/s, KB/s)")
 	)
 	flag.Usage = usage
 	flag.Parse()
@@ -51,6 +52,9 @@ func main() {
 	defer closeLog()
 
 	app := ui.New(cfg)
+	if *perfFlag {
+		app.EnablePerf()
+	}
 	prog := tea.NewProgram(app, tea.WithAltScreen(), tea.WithReportFocus())
 	if _, err := prog.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

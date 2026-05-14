@@ -73,11 +73,11 @@ func StatusColor(s api.Status) lipgloss.AdaptiveColor {
 	return Subtle
 }
 
-// StatusPill renders "<glyph> <status>" colored.
+// StatusPill renders the colored status name; longest fits in 14 cols.
 func StatusPill(s api.Status) string {
 	return lipgloss.NewStyle().
 		Foreground(StatusColor(s)).
-		Render(StatusGlyph(s) + " " + string(s))
+		Render(string(s))
 }
 
 // StatusGlyphColored returns just the glyph in the status color.

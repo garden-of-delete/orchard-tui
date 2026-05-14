@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -35,6 +36,19 @@ type Client struct {
 	BaseURL string
 	APIKey  string // optional — sent as x-api-key when non-empty
 	HTTP    *http.Client
+
+	reqs      atomic.Uint64
+	respBytes atomic.Uint64
+}
+
+// Stats is a cheap snapshot for the --perf logger.
+type Stats struct {
+	Requests      uint64
+	ResponseBytes uint64
+}
+
+func (c *Client) Stats() Stats {
+	return Stats{Requests: c.reqs.Load(), ResponseBytes: c.respBytes.Load()}
 }
 
 // New returns a Client with sensible defaults. baseURL is expected to
@@ -77,11 +91,24 @@ func (c *Client) getJSON(ctx context.Context, path string, query url.Values, out
 		return err
 	}
 	defer resp.Body.Close()
-	body := io.LimitReader(resp.Body, maxResponseBytes)
+	body := &countingReader{r: io.LimitReader(resp.Body, maxResponseBytes), n: &c.respBytes}
 	if err := json.NewDecoder(body).Decode(out); err != nil {
 		return fmt.Errorf("api: decode %s: %w", path, err)
 	}
 	return nil
+}
+
+type countingReader struct {
+	r io.Reader
+	n *atomic.Uint64
+}
+
+func (cr *countingReader) Read(p []byte) (int, error) {
+	n, err := cr.r.Read(p)
+	if n > 0 {
+		cr.n.Add(uint64(n))
+	}
+	return n, err
 }
 
 func (c *Client) urlFor(path string, query url.Values) string {
@@ -113,6 +140,7 @@ func (c *Client) do(ctx context.Context, method, target string, body io.Reader) 
 	}
 
 	resp, err := c.HTTP.Do(req)
+	c.reqs.Add(1)
 	if err != nil {
 		log.Printf("api: %s %s: %v", method, target, err)
 		return nil, fmt.Errorf("api: %s %s: %w", method, target, err)

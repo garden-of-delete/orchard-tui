@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/garden-of-delete/orchard-tui/internal/api"
 	"github.com/garden-of-delete/orchard-tui/internal/ui/uitypes"
 )
@@ -160,5 +162,72 @@ func TestWorkflowsFilterClearedDropsAll(t *testing.T) {
 	}
 	if len(w.visible) != 1 {
 		t.Errorf("after clear: visible len=%d, want 1", len(w.visible))
+	}
+}
+
+// TestSortByStatusFloatsFailuresFirst verifies the default status sort
+// puts red statuses at the top and pushes finished to the bottom.
+func TestSortByStatusFloatsFailuresFirst(t *testing.T) {
+	now := time.Now()
+	mk := func(id string, s api.Status, age time.Duration) api.Workflow {
+		return api.Workflow{
+			ID:        id,
+			Name:      id,
+			Status:    s,
+			CreatedAt: api.OrchardTime{Time: now.Add(-age)},
+		}
+	}
+	w := NewWorkflows(nil, nil, time.Second, time.Second, time.Second)
+	// Deliberately scrambled by status, mixed ages.
+	w.rows = []api.Workflow{
+		mk("finished-old", api.StatusFinished, 5*time.Hour),
+		mk("pending-new", api.StatusPending, 1*time.Minute),
+		mk("failed-mid", api.StatusFailed, 30*time.Minute),
+		mk("running-new", api.StatusRunning, 2*time.Minute),
+		mk("canceled-old", api.StatusCanceled, 4*time.Hour),
+	}
+
+	w.sortMode = sortByStatus
+	w.sortRows()
+
+	got := make([]string, len(w.rows))
+	for i, r := range w.rows {
+		got[i] = r.ID
+	}
+	want := []string{"failed-mid", "canceled-old", "running-new", "pending-new", "finished-old"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("sortByStatus[%d] = %q, want %q (full: %v)", i, got[i], want[i], got)
+		}
+	}
+
+	w.sortMode = sortByCreated
+	w.sortRows()
+	for i, r := range w.rows {
+		got[i] = r.ID
+	}
+	wantCreated := []string{"pending-new", "running-new", "failed-mid", "canceled-old", "finished-old"}
+	for i := range wantCreated {
+		if got[i] != wantCreated[i] {
+			t.Errorf("sortByCreated[%d] = %q, want %q (full: %v)", i, got[i], wantCreated[i], got)
+		}
+	}
+}
+
+// TestSortKeyTogglesMode verifies the `S` key cycles sortMode and
+// re-applies the filter.
+func TestSortKeyTogglesMode(t *testing.T) {
+	w := NewWorkflows(nil, nil, time.Second, time.Second, time.Second)
+	if w.sortMode != sortByStatus {
+		t.Fatalf("default sortMode = %v, want sortByStatus", w.sortMode)
+	}
+	s := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'S'}}
+	_, _ = w.Update(s)
+	if w.sortMode != sortByCreated {
+		t.Errorf("after first S: sortMode = %v, want sortByCreated", w.sortMode)
+	}
+	_, _ = w.Update(s)
+	if w.sortMode != sortByStatus {
+		t.Errorf("after second S: sortMode = %v, want sortByStatus", w.sortMode)
 	}
 }
