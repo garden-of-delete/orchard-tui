@@ -266,12 +266,13 @@ func attemptsColumns(width int) []table.Column {
 	const (
 		numW, statusW, resW, instW, timeW = 4, 14, 6, 6, 10
 		minErr                            = 30
+		nCols                             = 8
 	)
 	if width <= 0 {
 		width = 80
 	}
 	fixed := numW + statusW + resW + instW + 3*timeW
-	errW := width - fixed - 2
+	errW := width - fixed - 2 - cellPad*nCols
 	if errW < minErr {
 		errW = minErr
 	}
