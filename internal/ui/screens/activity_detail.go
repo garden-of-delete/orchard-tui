@@ -234,7 +234,7 @@ func (d *ActivityDetail) refreshTable() {
 	for _, a := range d.attempts {
 		rows = append(rows, table.Row{
 			fmt.Sprintf("%d", a.Attempt),
-			styles.StatusPill(a.Status),
+			string(a.Status),
 			format.Trunc(format.Sanitize(format.FirstLine(a.ErrorMessage)), errW),
 			format.Trunc(format.Sanitize(a.ResourceID), 6),
 			fmt.Sprintf("%d", a.ResourceInstanceAttempt),

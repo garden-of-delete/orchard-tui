@@ -75,6 +75,10 @@ func (f Footer) renderBindings() string {
 		}
 		parts = append(parts, styles.Hint.Render(h.Key+"·"+h.Desc))
 	}
-	parts = append(parts, styles.Hint.Render("?·help"), styles.Hint.Render("q·quit"))
+	parts = append(parts,
+		styles.Hint.Render("esc·back"),
+		styles.Hint.Render("?·help"),
+		styles.Hint.Render("q·quit"),
+	)
 	return strings.Join(parts, "  ")
 }
