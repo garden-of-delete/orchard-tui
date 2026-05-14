@@ -400,12 +400,13 @@ func activitiesColumns(width int) []table.Column {
 	const (
 		idW, statusW, resW, timeW = 6, 14, 6, 10
 		minName, minType          = 14, 12
+		nCols                     = 8
 	)
 	if width <= 0 {
 		width = 80
 	}
 	fixed := idW + statusW + resW + 3*timeW
-	flex := width - fixed - 2
+	flex := width - fixed - 2 - cellPad*nCols
 	if flex < minName+minType {
 		flex = minName + minType
 	}
@@ -433,12 +434,13 @@ func resourcesColumns(width int) []table.Column {
 	const (
 		idW, statusW, timeW, ttlW = 6, 14, 10, 6
 		minName, minType          = 14, 14
+		nCols                     = 8
 	)
 	if width <= 0 {
 		width = 80
 	}
 	fixed := idW + statusW + 3*timeW + ttlW
-	flex := width - fixed - 2
+	flex := width - fixed - 2 - cellPad*nCols
 	if flex < minName+minType {
 		flex = minName + minType
 	}

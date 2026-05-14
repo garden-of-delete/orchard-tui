@@ -263,12 +263,13 @@ func instancesColumns(width int) []table.Column {
 	const (
 		numW, statusW, timeW = 4, 14, 10
 		minErr               = 30
+		nCols                = 6
 	)
 	if width <= 0 {
 		width = 80
 	}
 	fixed := numW + statusW + 3*timeW
-	errW := width - fixed - 2
+	errW := width - fixed - 2 - cellPad*nCols
 	if errW < minErr {
 		errW = minErr
 	}

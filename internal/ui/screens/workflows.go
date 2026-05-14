@@ -374,6 +374,9 @@ func sortLabel(m sortMode) string {
 	return "created"
 }
 
+// cellPad is the per-side padding bubbles/table adds to every cell.
+const cellPad = 2
+
 // clampCursor fixes the -1 cursor that bubbles/table leaves after SetRows(nil).
 func clampCursor(tbl *table.Model, n int) {
 	if n == 0 {
@@ -417,21 +420,28 @@ func (w *Workflows) layout() {
 }
 
 func (w *Workflows) computeColumns(width int) []table.Column {
+	// maxID covers "wf-" + a 36-char UUID; anything wider just wastes space
+	// that NAME can use instead.
 	const (
 		statusW = 14
 		timeW   = 10
 		minID   = 20
+		maxID   = 40
 		minName = 12
+		nCols   = 6
 	)
 	if width <= 0 {
 		width = 80
 	}
 	fixed := statusW + 3*timeW
-	flex := width - fixed - 2
+	flex := width - fixed - 2 - cellPad*nCols
 	if flex < minID+minName {
 		flex = minID + minName
 	}
-	idW := flex * 55 / 100
+	idW := maxID
+	if flex-minName < idW {
+		idW = flex - minName
+	}
 	if idW < minID {
 		idW = minID
 	}
